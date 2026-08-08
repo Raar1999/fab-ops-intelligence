@@ -323,6 +323,8 @@ def test_a_mechanism_whose_latent_the_world_lacks_is_rejected(make_template):
     del raw["latents"][dropped]
     for channel in raw["observation"]["channels"]:
         channel["sensitivities"].pop(dropped, None)
+    for origin in raw["defects"]["origins"].values():
+        origin["sensitivities"].pop(dropped, None)
     raw["alarms"]["codes"] = [code for code in raw["alarms"]["codes"]
                               if code["signal"] != dropped]
     thinner = build_world(raw)

@@ -36,9 +36,12 @@ and the stage the physics will later play on:
                     in recipe setpoints and zonal metrology referenced to
                     product targets, produced from realized latent state
                     through the world's declared sensitivity matrix
+* `fabsim.defects`  the defect plane: Poisson intensity as a mixture of
+                    physical origins, per-origin geometry in real wafer
+                    coordinates, and a noisy classifier over the hidden origin
 
-The defect and yield models, the observable emitters and the truth artifact
-are later slices. Nothing in this package reads or writes a dataset yet.
+The die/yield model, the observable emitters and the truth artifact are later
+slices. Nothing in this package reads or writes a dataset yet.
 
 `fabsim.latent` is the only slice that reads a scenario's `events`: everything
 downstream reads *latent state*, so a fault's effect on a measurement is
@@ -50,7 +53,8 @@ pipeline's schedule does differ once a repair takes a chamber out of service,
 which is honest observable data (ADR-017 §5).
 
 The die-grid contract of Step 3.0 remains a declaration: no code yet lays out
-a die grid, generates a defect or computes a yield.
+a die grid or computes a yield. Defect coordinates are real wafer coordinates
+precisely so that 3E can intersect them with one.
 """
 from __future__ import annotations
 
@@ -69,7 +73,9 @@ __all__ = ["SCHEMA_VERSION", "__version__"]
 #: trajectories and adds windows to the calendar.
 #: 0.4.0 — Step 3C: the process observation plane. New emitted quantities and
 #: a new per-latent `radial_weight` in the world contract.
-__version__ = "0.4.0"
+#: 0.5.0 — Step 3D: the defect plane. New emitted quantities, a new `defects`
+#: block and a new per-product `defect_scale` in the world contract.
+__version__ = "0.5.0"
 
 #: Observable schema version, recorded in `dataset_meta` and the manifest.
 #: The schema v2 DDL is a later Phase 1 slice; the constant exists now because

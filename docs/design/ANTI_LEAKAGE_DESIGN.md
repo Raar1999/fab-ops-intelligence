@@ -81,6 +81,18 @@ The observation plane is where the audited `−0.08 if bad_tool` term lived, so 
 
 Static guards: the engine names no mechanism, event, severity, counterfactual, scenario or entity, reaches no 3D/3E concept, and opens no file.
 
+## 3.4 What Step 3D added: the circularity has no successor
+
+The defect plane is where the audit found the tightest loop — a defect's type chose its coordinates and the coordinates then confirmed the type. The arrows now run once, and in one direction:
+
+- **D3 (T4), in full.** Geometry comes from the *hidden origin*; the observable class is a **draw** through the world's confusion row. Measured on the baseline world: `particle_cluster → PARTICLE` at 0.880 against a declared 0.88, every class arising from more than one origin, and origin and class disagreeing on over 40% of defects. Spatial confirmation of a classified type can therefore genuinely fail.
+- **The hidden plane has its own record.** `Defect` has no origin field and no `killer_flag`; `DefectOrigin` is a separate collection keyed by defect id. An emitter handed the observable side has nothing to leak.
+- **The null carries the whole vocabulary.** Every origin and every class occurs in a world with nothing wrong in it, at 22 defects per wafer with no spotless wafers — so neither "this wafer has defects" nor "this wafer has PARTICLE defects" is an answer.
+- **No perfect separation (T5).** Exposed and healthy wafers' edge-share distributions straddle each other's medians, and every product both saw and missed the affected chamber.
+- **Coordinates, not labels (T2).** Nothing writes a zone; the signature is geometry an analyst must measure.
+
+Static guards: the engine names no mechanism, event, scenario, severity, counterfactual or entity; reaches no die, bin or yield identifier *or code string*; and opens no file.
+
 ## 4. Process rules (human-side leakage)
 
 1. New mechanisms/scenarios must ship with their L-suite expectations before merging.

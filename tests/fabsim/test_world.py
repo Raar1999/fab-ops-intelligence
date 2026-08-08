@@ -1269,6 +1269,117 @@ def test_the_response_policy_has_no_per_entity_knob(world):
     assert not (fields & forbidden)
 
 
+# ---------------------------------------------------- defect contract (3D)
+
+
+def test_the_baseline_declares_an_intensity_for_every_origin(world):
+    """The mixture's components are exactly the classifier's origins.
+
+    An origin the fab can produce but the classifier cannot label would emit a
+    defect with nothing to call it; one the classifier knows but nothing can
+    produce would be a class with no support — which is how a vocabulary value
+    becomes a fingerprint (rule D2).
+    """
+    classifier = world.observation.classifier
+    assert {o.origin for o in world.defects.origins} == set(classifier.origins)
+    for policy in world.defects.origins:
+        assert policy.base_rate > 0.0          # a healthy fab makes all of it
+        for latent, sensitivity in policy.sensitivities:
+            assert latent in world.observation.latents
+            assert sensitivity >= 0.0
+
+
+def test_defect_geometry_fits_inside_the_wafer(world):
+    policy = world.defects
+    assert policy.edge_inner_fraction + policy.edge_width_fraction <= 1.0
+    assert 0.0 < policy.center_sigma_fraction < 1.0
+    assert policy.cluster_radius_mm > 0.0
+    assert policy.cluster_mean_defects >= 1.0
+    assert policy.size_median_um > 0.0
+
+
+def test_baseline_defectivity_is_product_dependent(world):
+    """`CAUSAL_MECHANISM_MODEL.md` §4.1's standing distractor."""
+    scales = {p.product_name: p.defect_scale for p in world.products}
+    assert len(set(scales.values())) > 1
+    assert all(value > 0.0 for value in scales.values())
+
+
+def test_rejects_an_origin_the_classifier_does_not_know(make_template):
+    raw = make_template()
+    raw["defects"]["origins"]["burn_mark"] = {"base_rate": 0.001,
+                                              "sensitivities": {}}
+    with pytest.raises(WorldTemplateError, match="unknown field"):
+        build_world(raw)
+
+
+def test_rejects_an_origin_with_no_intensity(make_template):
+    raw = make_template()
+    del raw["defects"]["origins"]["scratch"]
+    with pytest.raises(WorldTemplateError, match="no intensity"):
+        build_world(raw)
+
+
+def test_rejects_a_defect_sensitivity_keyed_to_an_entity(make_template):
+    raw = make_template()
+    raw["defects"]["origins"]["edge_ring"]["sensitivities"] = {"ETCH-02": 1.0}
+    with pytest.raises(WorldTemplateError, match="not a declared latent"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"base_rate": 0.0}, "defects.origins.edge_ring.base_rate"),
+    ({"base_rate": -1.0}, "defects.origins.edge_ring.base_rate"),
+    ({"decay": 0.5}, "defects.origins.edge_ring"),
+])
+def test_rejects_an_invalid_origin_intensity(make_template, overrides, path):
+    raw = make_template()
+    raw["defects"]["origins"]["edge_ring"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("block, overrides, path", [
+    ("size", {"median_um": 0.0}, "defects.size.median_um"),
+    ("size", {"log_sigma": 0.0}, "defects.size.log_sigma"),
+    ("edge_ring", {"inner_fraction": 1.0}, "defects.edge_ring.inner_fraction"),
+    ("edge_ring", {"width_fraction": 0.0},
+     "defects.edge_ring.width_fraction"),
+    ("edge_ring", {"jitter_fraction": -0.1},
+     "defects.edge_ring.jitter_fraction"),
+    ("center", {"sigma_fraction": 1.0}, "defects.center.sigma_fraction"),
+    ("cluster", {"radius_mm": 0.0}, "defects.cluster.radius_mm"),
+    ("cluster", {"mean_defects": 0.5}, "defects.cluster.mean_defects"),
+    ("scratch", {"jitter_mm": -1.0}, "defects.scratch.jitter_mm"),
+    ("size", {"tail": 2.0}, "defects.size"),
+])
+def test_rejects_invalid_defect_geometry(make_template, block, overrides,
+                                         path):
+    raw = make_template()
+    raw["defects"][block].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_a_ring_that_reaches_past_the_wafer_edge(make_template):
+    raw = make_template()
+    raw["defects"]["edge_ring"].update({"inner_fraction": 0.9,
+                                        "width_fraction": 0.3})
+    with pytest.raises(WorldTemplateError, match="cannot land outside"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0, "1.0"])
+def test_rejects_an_invalid_product_defect_scale(make_template, scale):
+    raw = make_template()
+    raw["products"][0]["defect_scale"] = scale
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == "products[0].defect_scale"
+
+
 # --------------------------------------------------------- world identity
 
 
@@ -1302,6 +1413,10 @@ def test_the_same_world_hashes_the_same_way(template):
         no_fix_probability=0.2), id="recovery-policy"),
     pytest.param(lambda raw: raw["latents"]["edge_uniformity"].update(
         radial_weight=0.5), id="radial-weight"),
+    pytest.param(lambda raw: raw["defects"]["origins"]["edge_ring"].update(
+        base_rate=0.0003), id="defect-intensity"),
+    pytest.param(lambda raw: raw["products"][0].update(defect_scale=1.4),
+                 id="product-defectivity"),
 ])
 def test_a_semantic_change_changes_the_world_hash(template, mutate):
     """Anything that can move emitted data must move the identity with it."""

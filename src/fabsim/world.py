@@ -94,6 +94,8 @@ __all__ = [
     "Chamber",
     "ClassifierPolicy",
     "Dedication",
+    "DefectOriginPolicy",
+    "DefectPolicy",
     "DieGridPolicy",
     "HourRange",
     "FlowStep",
@@ -222,13 +224,13 @@ _TEMPLATE_REQUIRED = (HEADER_KEY, "name", "time_origin", "wafers_per_lot",
                       "process_flows", "tools", "operators", "routing",
                       "lot_release", "queue", "maintenance", "observation",
                       "alarms", "die_grid", "latents", "mechanisms",
-                      "response")
+                      "response", "defects")
 _TEMPLATE_OPTIONAL = ("description", "recipes")
 _TEMPLATE_KEYS = _TEMPLATE_REQUIRED + _TEMPLATE_OPTIONAL
 
 _PRODUCT_REQUIRED = ("name", "flow", "technology_node_nm", "wafer_size_mm",
                      "die_size_mm2", "target_yield_pct", "mix_weight",
-                     "metric_scale")
+                     "metric_scale", "defect_scale")
 _STEP_REQUIRED = ("name", "operation_type", "duration_minutes")
 _STEP_OPTIONAL = ("is_inspection", "metric", "settings", "measures", "covers",
                   "layer")
@@ -291,6 +293,15 @@ _RESPONSE_KEYS = ("baseline_alpha", "baseline_warmup_days",
                   "repair_delay_days_mean", "repair_cooldown_days",
                   "repair_duration_hours", "recovery")
 _RECOVERY_KEYS = ("quality_alpha", "quality_beta", "no_fix_probability")
+
+_DEFECTS_KEYS = ("origins", "size", "edge_ring", "center", "cluster",
+                 "scratch")
+_DEFECT_SIZE_KEYS = ("median_um", "log_sigma")
+_DEFECT_EDGE_KEYS = ("inner_fraction", "width_fraction", "jitter_fraction")
+_DEFECT_CENTER_KEYS = ("sigma_fraction",)
+_DEFECT_CLUSTER_KEYS = ("radius_mm", "mean_defects")
+_DEFECT_SCRATCH_KEYS = ("length_fraction", "jitter_mm")
+_DEFECT_ORIGIN_KEYS = ("base_rate", "sensitivities")
 
 #: Names that are code-level identifiers (template and flow names) versus names
 #: that are shop-floor vocabulary (``ETCH-02``, ``B``, ``OP-101``).
@@ -534,6 +545,12 @@ class Product:
     #: signature that makes products statistically distinguishable without any
     #: product ever being "the answer".
     metric_scale: float
+    #: Scales this product's *baseline* defectivity. A longer, finer stack
+    #: collects more of everything, healthy or not, which is why
+    #: `CAUSAL_MECHANISM_MODEL.md` §4.1 makes background defectivity
+    #: product-dependent: it is standing structure a naive commonality
+    #: analysis could wrongly accuse (§3).
+    defect_scale: float
 
 
 @dataclass(frozen=True)
@@ -899,6 +916,64 @@ class LatentDynamics:
 
 
 @dataclass(frozen=True)
+class DefectOriginPolicy:
+    """One component of the defect intensity mixture.
+
+    A component is named by its *physical origin* (`CAUSAL_MECHANISM_MODEL.md`
+    §4.2), not by anything that caused it: `edge_ring` is what a radial
+    non-uniformity leaves behind, whoever made the chamber non-uniform.
+
+    `base_rate` is the propensity a healthy fab has anyway — which is why a
+    null world has a full defect population — and `sensitivities` say how much
+    each latent adds to it, in the same "per latent severity-σ" units the
+    observation channels use (ADR-018). There is no field for a mechanism,
+    because the intensity model has no way to ask.
+    """
+
+    origin: str
+    #: Defects per mm² of inspected area on a healthy chamber.
+    base_rate: float
+    #: latent → defects per mm² per severity-σ of that latent's magnitude.
+    sensitivities: tuple[tuple[str, float], ...]
+
+
+@dataclass(frozen=True)
+class DefectPolicy:
+    """How defects arise, where they land, and how big they are.
+
+    Every constant here is keyed by origin, step, product or latent — never by
+    a tool, a chamber, an event or a mechanism (rule D6). The spatial shapes
+    are the ones `CAUSAL_MECHANISM_MODEL.md` §4.3 names, and they are stated
+    as *geometry* so that a later analyst derives the edge fraction from
+    coordinates rather than being handed a zone label.
+    """
+
+    origins: tuple[DefectOriginPolicy, ...]
+    #: Lognormal size, in µm. An inspection reports only what its own
+    #: sensitivity threshold can see, which thins the population honestly.
+    size_median_um: float
+    size_log_sigma: float
+    #: `edge_ring`: an annulus at `inner_fraction`·R of width
+    #: `width_fraction`·R, with radial jitter so the ring is a tendency rather
+    #: than a partition (§4.3's "signatures overlap distributions").
+    edge_inner_fraction: float
+    edge_width_fraction: float
+    edge_jitter_fraction: float
+    #: `center`: a Gaussian blob of this fraction of the wafer radius.
+    center_sigma_fraction: float
+    #: `particle_cluster`: defects arrive in clumps around a seed point.
+    cluster_radius_mm: float
+    cluster_mean_defects: float
+    #: `scratch`: a line segment of this fraction of the wafer diameter, with
+    #: a little perpendicular scatter.
+    scratch_length_fraction: float
+    scratch_jitter_mm: float
+
+    def origin(self, name: str) -> DefectOriginPolicy:
+        return {o.origin: o for o in self.origins}[name]
+
+
+@dataclass(frozen=True)
 class RecoveryPolicy:
     """How well a repair works — one distribution, for every repair alike.
 
@@ -1056,6 +1131,7 @@ class World:
     observation: ObservationPolicy
     alarms: AlarmPolicy
     die_grid: DieGridPolicy
+    defects: DefectPolicy
     latent_dynamics: tuple[LatentDynamics, ...]
     mechanism_policy: MechanismPolicy
     response: ResponsePolicy
@@ -1669,6 +1745,9 @@ def _build_products(raw: Any, flows: Sequence[ProcessFlow]
                                _at(path, "mix_weight"), minimum=1),
             metric_scale=_as_number(_require(obj, "metric_scale", path),
                                     _at(path, "metric_scale"),
+                                    greater_than=0.0),
+            defect_scale=_as_number(_require(obj, "defect_scale", path),
+                                    _at(path, "defect_scale"),
                                     greater_than=0.0),
         ))
     _unique([p.product_name for p in products], "products", "product name")
@@ -2345,6 +2424,103 @@ def _build_mechanisms(raw: Any) -> MechanismPolicy:
     )
 
 
+def _build_defects(raw: Any, latents: Sequence[str],
+                   classifier: ClassifierPolicy) -> DefectPolicy:
+    """The defect intensity mixture and the geometry each component takes.
+
+    The mixture's components must be exactly the classifier's declared
+    origins: an origin the intensity model can produce but the classifier
+    cannot label would emit a defect with nothing to call it, and an origin
+    the classifier knows but nothing can produce would be a class with no
+    support — which is how a vocabulary value becomes a fingerprint (rule D2).
+    """
+    obj = _as_object(raw, "defects")
+    _reject_unknown(obj, _DEFECTS_KEYS, "defects")
+
+    def block(key: str, allowed: Sequence[str]) -> dict[str, Any]:
+        path = f"defects.{key}"
+        entry = _as_object(_require(obj, key, "defects"), path)
+        _reject_unknown(entry, allowed, path)
+        return entry
+
+    size = block("size", _DEFECT_SIZE_KEYS)
+    edge = block("edge_ring", _DEFECT_EDGE_KEYS)
+    center = block("center", _DEFECT_CENTER_KEYS)
+    cluster = block("cluster", _DEFECT_CLUSTER_KEYS)
+    scratch = block("scratch", _DEFECT_SCRATCH_KEYS)
+
+    origins_path = "defects.origins"
+    origins_obj = _as_object(_require(obj, "origins", "defects"), origins_path)
+    _reject_unknown(origins_obj, classifier.origins, origins_path)
+    built: list[DefectOriginPolicy] = []
+    for name in classifier.origins:
+        path = _at(origins_path, name)
+        if name not in origins_obj:
+            raise WorldTemplateError(
+                f"origin {name!r} has no intensity; every origin the "
+                "classifier can label must be one the fab can produce", path)
+        entry = _as_object(origins_obj[name], path)
+        _reject_unknown(entry, _DEFECT_ORIGIN_KEYS, path)
+        sensitivity_path = _at(path, "sensitivities")
+        sensitivities = _as_object(_require(entry, "sensitivities", path),
+                                   sensitivity_path)
+        for key in sensitivities:
+            if key not in latents:
+                raise WorldTemplateError(
+                    f"{key!r} is not a declared latent; defect sensitivities "
+                    "are keyed by latent, never by an entity or an event",
+                    _at(sensitivity_path, key))
+        built.append(DefectOriginPolicy(
+            origin=name,
+            base_rate=_as_number(_require(entry, "base_rate", path),
+                                 _at(path, "base_rate"), greater_than=0.0),
+            sensitivities=tuple(sorted(
+                (key, _as_number(value, _at(sensitivity_path, key),
+                                 minimum=0.0))
+                for key, value in sensitivities.items())),
+        ))
+
+    inner = _as_number(_require(edge, "inner_fraction", "defects.edge_ring"),
+                       "defects.edge_ring.inner_fraction", greater_than=0.0,
+                       less_than=1.0)
+    width = _as_number(_require(edge, "width_fraction", "defects.edge_ring"),
+                       "defects.edge_ring.width_fraction", greater_than=0.0)
+    if inner + width > 1.0:
+        raise WorldTemplateError(
+            f"the ring reaches {inner + width} of the wafer radius; a defect "
+            "cannot land outside the wafer",
+            "defects.edge_ring.width_fraction")
+
+    return DefectPolicy(
+        origins=tuple(built),
+        size_median_um=_as_number(_require(size, "median_um", "defects.size"),
+                                  "defects.size.median_um", greater_than=0.0),
+        size_log_sigma=_as_number(_require(size, "log_sigma", "defects.size"),
+                                  "defects.size.log_sigma", greater_than=0.0),
+        edge_inner_fraction=inner,
+        edge_width_fraction=width,
+        edge_jitter_fraction=_as_number(
+            _require(edge, "jitter_fraction", "defects.edge_ring"),
+            "defects.edge_ring.jitter_fraction", minimum=0.0),
+        center_sigma_fraction=_as_number(
+            _require(center, "sigma_fraction", "defects.center"),
+            "defects.center.sigma_fraction", greater_than=0.0, less_than=1.0),
+        cluster_radius_mm=_as_number(
+            _require(cluster, "radius_mm", "defects.cluster"),
+            "defects.cluster.radius_mm", greater_than=0.0),
+        cluster_mean_defects=_as_number(
+            _require(cluster, "mean_defects", "defects.cluster"),
+            "defects.cluster.mean_defects", minimum=1.0),
+        scratch_length_fraction=_as_number(
+            _require(scratch, "length_fraction", "defects.scratch"),
+            "defects.scratch.length_fraction", greater_than=0.0,
+            maximum=2.0),
+        scratch_jitter_mm=_as_number(
+            _require(scratch, "jitter_mm", "defects.scratch"),
+            "defects.scratch.jitter_mm", minimum=0.0),
+    )
+
+
 def _build_response(raw: Any) -> ResponsePolicy:
     """How the fab notices conditions and reacts — one policy, fab-wide.
 
@@ -2601,6 +2777,9 @@ def build_world(raw: Mapping[str, Any]) -> World:
         alarms=_build_alarms(_require(obj, "alarms", ""), operations, tools,
                              observation),
         die_grid=_build_die_grid(_require(obj, "die_grid", ""), products),
+        defects=_build_defects(_require(obj, "defects", ""),
+                               observation.latents,
+                               observation.classifier),
         latent_dynamics=_build_latents(_require(obj, "latents", ""),
                                        observation.latents),
         mechanism_policy=_build_mechanisms(_require(obj, "mechanisms", "")),

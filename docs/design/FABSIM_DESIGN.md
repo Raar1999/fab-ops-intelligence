@@ -68,6 +68,9 @@ src/fabsim/
 │                          #   world; share-based dedication (ADR-015) [implemented]
 ├── response.py            # alarms, escalation, response-driven maintenance
 │                          #   and generic recovery (ADR-017)        [implemented]
+├── defects.py             # defect intensity, per-origin geometry and the
+│                          #   noisy classifier (ADR-019; replaces
+│                          #   models/defects.py)                    [implemented]
 ├── observation.py         # FDC summaries + zonal metrology from latent state,
 │                          #   recipe setpoints and the variation stack
 │                          #   (ADR-018; replaces models/parameters.py)
@@ -158,10 +161,12 @@ Stage 4 of the pipeline (the physics) is built in ordered slices, each gated on 
 | **3A Latent plane** | per-chamber latent state on a versioned 60-minute grid, its baseline dynamics and benign offsets, the four-mechanism library, PM reset semantics, and the internal `Realization` (ADR-016) | **implemented** |
 | **3B Fab response** | generic alarm rules on the chamber's own control limits, background false alarms, escalation into work orders, response-driven maintenance that blocks production, and one recovery machine for every maintenance event (ADR-017) | **implemented** |
 | **3C Process observation** | FDC summaries and zonal metrology from realized latent state through the declared sensitivity matrix, over the full variation stack (ADR-018) | **implemented** |
-| 3D Defects | intensity, origin, geometry, the noisy classifier | not started |
+| **3D Defects** | Poisson intensity as a mixture of physical origins with declared latent sensitivities, per-origin geometry in wafer coordinates, and a noisy classifier over the hidden origin (ADR-019) | **implemented** |
 | 3E Die + yield | die grid, kill model, bins, wafer yield | not started |
 
 The boundary 3.0 holds is that it declares *machinery* and never behaviour: the alarm block states thresholds and background rates but fires nothing; the die-grid block states geometry but lays out no grid; the observation block states channels, sensitivities and confusion but computes no value. A contract that named an event, a mechanism, a tool or a chamber would have pre-committed the answer before the mechanism layer existed, so none of them has a field for one.
+
+The boundary 3D holds is that the chain stops at a defect. The engine reads latent trajectories, recipes, the route and the clock, and writes inspections and defects; it reaches no die, no bin and no yield — checked by AST over identifiers *and* code strings. The hidden physical origin exists because the geometry needs it, and it lives in a separate record: the observable `Defect` has no field for it, and no `killer_flag`.
 
 The boundary 3C holds is that a measurement is a *projection*. The observation engine reads latent trajectories, recipes and the clock, and writes numbers; it never reaches back to change latent state, and it never reads `Realization.mechanisms`, `.distractors` or `.counterfactual`. Mediation is checked exactly rather than argued: the same timeline is measured twice, once against the realized trajectories and once against their mechanism-free twins, and the difference is asserted to equal the latent departure times the declared sensitivity times the channel scale — and to be exactly zero on every other chamber and before every onset.
 

@@ -32,6 +32,8 @@ The null dataset passes the full integrity suite; leakage tests L7 (null blindne
 
 *As implemented (Step 3B), the null is not artificially clean:* it raises alarms of **both** kinds on most of its chambers, escalates some of them into work orders, and recovers latent state at background breakdowns and requested repairs alike. A null dataset that contained no alarms and no unscheduled maintenance would make either one an answer; this criterion now requires their presence, not their absence.
 
+*As implemented (Step 3D), the null defect population is ordinary:* 22 defects per wafer, no spotless wafers, all five origins and all five classes present, and a background radial profile matching the uniform-over-area law to within 0.02 in every radial fifth. A null dataset with no defects — or with only background ones — would make a defect class an answer.
+
 ### A4 — Structural integrity (generator self-tests, every build)
 All invariants of `SCHEMA_V2_DESIGN.md` §4 and `TEMPORAL_MODEL.md` §6: FK closure, run/step time ordering, zero runs during DOWN/PM, inspection/metrology/test time ordering, reconciliation (defect counts, die-bin sums, state-ribbon tiling), vocabulary closure.
 
@@ -59,6 +61,8 @@ Full anti-leakage suite L1–L11 green on all five library datasets. Highlighted
 On every dataset: ≥ 2 chambers per multi-chamber tool actually used; per-chamber run counts nonzero for qualified chambers; gate-etch vs metal-etch tool assignments independent (contingency association ≈ 0, breaking the audited collinearity); recipes resolve per product×step; measurable (benign) tool/chamber offsets exist in null data; product mix spread over lots and time (no one-lot-per-week artifact). On a dataset carrying a routing condition: the dedicated tool's share of the dedicated product's traffic rises inside the window and falls back outside it, while the dedicated product still reaches other qualified tools, other products still reach the dedicated tool, and every qualified chamber of the dedicated tool still carries traffic — dedication moved exposure probability, not eligibility (ADR-015).
 
 ### A9 — Demo continuity (ADR-010) *(partly manual review)*
+**At risk as of Step 3D — see ADR-019 §5.** The edge-ring signature this criterion requires depends on a fault raising `|edge_uniformity|`, and a flaw in the Step 3A/3B recovery model can leave a repaired chamber several σ from its baseline, so a fault can *reduce* its non-uniformity. On the baseline world the end-to-end signature is reliable only at `obvious` severity. The defect plane was not tuned to compensate; the fix is a one-line change to `_LatentState.recover` (recover the persistent departure, not the mean-reverting transient) and belongs in its own gated session before the scenario library is built.
+
 `demo_edge_uniformity` (scenario B, default seed) reproduces a **statistically equivalent** ETCH-02 story, defined as this checklist — not exact numbers:
 - the affected chamber's tool is worst of the three etch tools on cohort yield; deficit in 4–10 pts;
 - elevated edge-ring share and edge-zone defect concentration on the affected chamber's wafers;
