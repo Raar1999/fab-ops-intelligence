@@ -66,6 +66,8 @@ src/fabsim/
 │                          #   observation/alarm/die-grid contracts  [implemented]
 ├── routing.py             # scenario routing conditions resolved against a
 │                          #   world; share-based dedication (ADR-015) [implemented]
+├── response.py            # alarms, escalation, response-driven maintenance
+│                          #   and generic recovery (ADR-017)        [implemented]
 ├── timeline.py            # the event clock: lot release, wafer step progression,
 │                          #   tool/chamber occupancy, maintenance windows
 ├── latent.py              # per-chamber latent state evolution over time, the
@@ -150,12 +152,14 @@ Stage 4 of the pipeline (the physics) is built in ordered slices, each gated on 
 |---|---|---|
 | **3.0 Contracts** | the declarations the rest consume: `routing_conditions` + share-based dedication (ADR-015), the `measures`/`covers` relations (gate condition F1), the alarm, die-grid and observation configuration, and `world_sha256` in the build fingerprint | **implemented** |
 | **3A Latent plane** | per-chamber latent state on a versioned 60-minute grid, its baseline dynamics and benign offsets, the four-mechanism library, PM reset semantics, and the internal `Realization` (ADR-016) | **implemented** |
-| 3B Fab response | mechanisms acting on latents; alarms; repair and recovery | not started |
+| **3B Fab response** | generic alarm rules on the chamber's own control limits, background false alarms, escalation into work orders, response-driven maintenance that blocks production, and one recovery machine for every maintenance event (ADR-017) | **implemented** |
 | 3C Process observation | FDC summaries and metrology values from latents + the variation stack | not started |
 | 3D Defects | intensity, origin, geometry, the noisy classifier | not started |
 | 3E Die + yield | die grid, kill model, bins, wafer yield | not started |
 
 The boundary 3.0 holds is that it declares *machinery* and never behaviour: the alarm block states thresholds and background rates but fires nothing; the die-grid block states geometry but lays out no grid; the observation block states channels, sensitivities and confusion but computes no value. A contract that named an event, a mechanism, a tool or a chamber would have pre-committed the answer before the mechanism layer existed, so none of them has a field for one.
+
+The boundary 3B holds is that the chain stops at maintenance and recovery. The response layer reads latent state and writes alarms, maintenance windows and latent recovery — and cannot reach an FDC row, a defect, a die or a yield number, because none of those concepts is in scope for it. It also cannot reach a *mechanism*: the alarm, escalation and repair decision path is checked by AST to contain no mechanism, event, severity or counterfactual identifier, so "generic response rule" is a property of the code rather than a description of it.
 
 The boundary 3A holds is that its only output is **hidden physical state**. A mechanism raises a latent; nothing in the slice can raise a defect, fire an alarm, write a measurement or kill a die, because none of those concepts is reachable from it — `test_the_latent_plane_names_no_observable` and `test_the_latent_plane_imports_nothing_observable` check that structurally rather than by review. The `Realization` it produces is in-memory only: there is no path on disk, no registry and no singleton, so a later observable projection can only be *given* it, never find it (`GROUND_TRUTH_CONTRACT.md` §4). Truth emission remains a later gate.
 

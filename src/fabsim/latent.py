@@ -191,14 +191,32 @@ class BenignOffset:
 
 @dataclass(frozen=True)
 class LatentReset:
-    """A maintenance window's realized effect on one chamber's latent."""
+    """A maintenance window's realized effect on one chamber's latent.
+
+    Recorded for **every** maintenance event alike — scheduled PM, background
+    breakdown and condition-driven repair — because the machinery that
+    produces them is one machine (ADR-017). If only some kinds of maintenance
+    moved latent state, "behaviour changed after a repair" would separate
+    faulted chambers from healthy ones perfectly.
+    """
 
     chamber_id: int
     latent: str
     minute: int
+    #: Filled from the final calendar; `-1` until a response-created repair is
+    #: rebound to the id its window gets there.
     maint_id: int
-    #: Fraction of the current departure removed, as drawn for this PM.
+    #: Fraction of the current departure removed on this latent.
     fraction: float
+    #: `PM` or `UNSCHEDULED`, matching the window that caused it.
+    kind: str = "PM"
+    #: The intervention's drawn quality, shared by every latent this event
+    #: touched; `None` for a PM, whose per-latent policy is stated directly.
+    quality: float | None = None
+    #: True when the draw said the intervention achieved nothing.
+    no_fix: bool = False
+    before: float = 0.0
+    after: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -384,63 +402,74 @@ def _blocked_noise(rngs: Substreams, latent: str, tool_name: str,
     return tuple(noise[:points])
 
 
-def _integrate_ar1(dynamics: LatentDynamics, noise: Sequence[float],
-                   start: float, drive: Sequence[float],
-                   resets: Mapping[int, Sequence[float]],
-                   offset: float) -> tuple[float, ...]:
-    """AR(1) wander around a level a mechanism may move.
+class _LatentState:
+    """One chamber's one latent, stepped forward one grid point at a time.
 
-    The drive is the level the process reverts *to*, not an impulse added
-    inside the recursion: a sustained push inside a φ=0.98 recursion would
-    amplify fiftyfold, which is a modelling accident rather than physics. With
-    no drive this is exactly the null process — the counterfactual costs no
-    special case.
-
-    A reset does not touch the noise process; it books a permanent credit
-    against the current departure. So a PM removes 70% of what is there now
-    and the process wanders on from there, which is what makes a partially
-    recovered chamber different from a repaired one.
+    The arithmetic is exactly the one-shot integration of Step 3A; only the
+    loop order changed, so that the response layer can look at where a latent
+    *is* before deciding what the fab does about it. Two states run side by
+    side per latent — the configured one and its mechanism-free twin — sharing
+    every draw and every recovery, so the difference between them is the
+    mechanism and nothing else.
     """
-    phi = float(dynamics.phi)
-    sigma = float(dynamics.sigma)
-    state = start
-    carry = 0.0
-    values: list[float] = []
-    for index, epsilon in enumerate(noise):
-        state = phi * state + sigma * epsilon
-        total = drive[index] + state + carry
-        for fraction in resets.get(index, ()):
-            carry -= fraction * total
-            total = drive[index] + state + carry
-        values.append(offset + total)
-    return tuple(values)
 
+    def __init__(self, dynamics: LatentDynamics, offset: float, start: float,
+                 step_days: float) -> None:
+        self.dynamics = dynamics
+        self.offset = offset
+        self.step_days = step_days
+        self.value = offset
+        self._accumulating = dynamics.family == "accumulation"
+        if self._accumulating:
+            self._load = start
+            self._floor = (0.0 if dynamics.floor is None
+                           else float(dynamics.floor))
+            self._step_sigma = (float(dynamics.sigma_per_day)
+                                * math.sqrt(step_days))
+        else:
+            self._phi = float(dynamics.phi)
+            self._sigma = float(dynamics.sigma)
+            self._state = start
+            self._carry = 0.0
+            self._drive = 0.0
 
-def _integrate_accumulation(dynamics: LatentDynamics, noise: Sequence[float],
-                            start: float, drive: Sequence[float],
-                            resets: Mapping[int, Sequence[float]],
-                            offset: float,
-                            step_days: float) -> tuple[float, ...]:
-    """Load that climbs between cleans and is taken back down by them.
+    def step(self, epsilon: float, drive: float) -> float:
+        """Advance one grid point and return the new value."""
+        if self._accumulating:
+            # The drive is an added *growth rate*: a mechanism makes a chamber
+            # dirty faster rather than teleporting its load.
+            self._load += ((float(self.dynamics.growth_per_day) + drive)
+                           * self.step_days + self._step_sigma * epsilon)
+            self._load = max(self._load, self._floor)
+            self.value = self.offset + self._load
+        else:
+            # The drive is the level the process reverts *to*, not an impulse
+            # inside the recursion: a sustained push inside a φ=0.98 recursion
+            # would amplify fiftyfold, which is a modelling accident rather
+            # than physics.
+            self._state = self._phi * self._state + self._sigma * epsilon
+            self._drive = drive
+            self.value = self.offset + drive + self._state + self._carry
+        return self.value
 
-    The drive is an added *growth rate*, so a mechanism makes a chamber dirty
-    faster rather than teleporting its load — and a PM in the middle of an
-    excursion genuinely cleans it, after which the excursion starts climbing
-    again from zero. That sequence is the whole of scenario I, and none of it
-    is scripted here.
-    """
-    growth = float(dynamics.growth_per_day)
-    step_sigma = float(dynamics.sigma_per_day) * math.sqrt(step_days)
-    floor = 0.0 if dynamics.floor is None else float(dynamics.floor)
-    load = start
-    values: list[float] = []
-    for index, epsilon in enumerate(noise):
-        load += (growth + drive[index]) * step_days + step_sigma * epsilon
-        load = max(load, floor)
-        for fraction in resets.get(index, ()):
-            load *= (1.0 - fraction)
-        values.append(offset + load)
-    return tuple(values)
+    def recover(self, fraction: float) -> float:
+        """Remove `fraction` of the current departure; return the new value.
+
+        A recovery does not touch the noise process. For a wander latent it
+        books a permanent credit against the departure, so the process carries
+        on from where the intervention left it — which is what makes a
+        partially recovered chamber different from an untouched one, and what
+        leaves a residual for "did the intervention work?" to be about.
+        """
+        if self._accumulating:
+            self._load *= (1.0 - fraction)
+            self.value = self.offset + self._load
+        else:
+            departure = self.value - self.offset
+            self._carry -= fraction * departure
+            self.value = (self.offset + self._drive + self._state
+                          + self._carry)
+        return self.value
 
 
 # ------------------------------------------------------------------ the engine
@@ -479,20 +508,39 @@ def _benign_components(rngs: Substreams, dynamics: LatentDynamics,
     return tool_component, chamber_component, added
 
 
-def _pm_resets(timeline: Timeline, chamber_id: int, grid: LatentGrid
-               ) -> tuple[tuple[int, int, int], ...]:
-    """PM windows that clean this chamber: (grid index, minute, maint id).
+def _chamber_maintenance(timeline: Timeline, chamber_id: int,
+                         grid: LatentGrid
+                         ) -> tuple[tuple[int, int, int, str], ...]:
+    """Every window that touches this chamber: (grid index, minute, id, type).
 
-    Only PMs. Unscheduled repairs move latents too, but a repair is a
-    *response* — it is triggered, delayed and partially effective — and all
-    three of those belong to 3B. Bringing the reset forward without the
-    trigger would have made "a repair that moved a latent" a fault
-    fingerprint, since only faults would ever have caused one.
+    **Every** window, of every kind. Step 3A took only PMs, and deliberately
+    left a debt: if a fault-driven repair moved latent state and a background
+    breakdown did not, then "behaviour changed after a repair" would be a
+    perfect fault fingerprint, because only faulted chambers would ever have
+    had the first kind. One list, one recovery machine, no exceptions
+    (ADR-017).
     """
-    windows = [w for w in timeline.maintenance_of_chamber(chamber_id)
-               if w.maint_type == "PM"]
-    return tuple(sorted((grid.index_at(w.end_min), w.end_min, w.maint_id)
-                        for w in windows))
+    return tuple(sorted(
+        (grid.index_at(w.end_min), w.end_min, w.maint_id, w.maint_type)
+        for w in timeline.maintenance_of_chamber(chamber_id)))
+
+
+def draw_recovery_quality(rng: Any, policy: Any) -> tuple[float, bool]:
+    """How well one intervention worked, for one maintenance event.
+
+    `CAUSAL_MECHANISM_MODEL.md` §6: Beta(8, 2) — mean 0.8 — with a 10% chance
+    the repair achieves nothing. One draw per event, shared by every latent
+    that event touches; what differs between latents is how much of it lands
+    (`LatentDynamics.repair_efficacy`).
+
+    The draw asks nothing about *why* the window exists. A background
+    breakdown and a condition-driven repair reach this function through the
+    same call with the same distribution, which is the whole reason a repair
+    cannot be read backwards into a fault.
+    """
+    if rng.random() < policy.no_fix_probability:
+        return 0.0, True
+    return rng.betavariate(policy.quality_alpha, policy.quality_beta), False
 
 
 def _drive_series(world: World, event: ResolvedEvent, grid: LatentGrid,
@@ -526,20 +574,70 @@ def _drive_series(world: World, event: ResolvedEvent, grid: LatentGrid,
     return mechanism(event.mechanism).contribute(context), nominal, realized
 
 
+def _recovery_fractions(world: World, rngs: Substreams, tool_name: str,
+                        chamber_name: str, latents: Sequence[str],
+                        maint_type: str, end_minute: int,
+                        pm_rngs: Mapping[str, Any]
+                        ) -> list[tuple[str, float, float | None, bool]]:
+    """What one maintenance event does to each of a chamber's latents.
+
+    Two policies, chosen by the *kind of work*, never by its cause:
+
+    * a **PM** applies each latent's declared `pm_recovery` — a full clean of
+      the particle load, a partial recentre of the delivery bias, nothing at
+      all to the hardware, exactly as `CAUSAL_MECHANISM_MODEL.md` §6 states;
+    * **unscheduled** work — a background breakdown and a condition-driven
+      repair are the same thing here — draws one intervention quality and
+      spreads it across the latents by their `repair_efficacy`.
+
+    Nothing in this function can tell a breakdown from a requested repair, and
+    nothing in it can see a mechanism. That is what makes "did something get
+    repaired?" a question about a chamber's history rather than about the
+    answer key.
+    """
+    if maint_type == "PM":
+        result = []
+        for latent in latents:
+            dynamics = world.latent(latent)
+            if not dynamics.pm_resets():
+                continue
+            fraction = min(1.0, max(0.0, pm_rngs[latent].gauss(
+                dynamics.pm_recovery_mean, dynamics.pm_recovery_sd)))
+            result.append((latent, fraction, None, False))
+        return result
+
+    rng = rngs.stream("response.recovery", tool_name, chamber_name,
+                      int(end_minute))
+    quality, no_fix = draw_recovery_quality(rng, world.response.recovery)
+    return [(latent, quality * world.latent(latent).repair_efficacy, quality,
+             no_fix)
+            for latent in latents]
+
+
 def realize(timeline: Timeline, *,
             events: Sequence[ResolvedEvent] = (),
-            distractors: Sequence[ResolvedDistractor] = ()) -> Realization:
+            distractors: Sequence[ResolvedDistractor] = (),
+            responder: Any = None) -> Realization:
     """Integrate the latent plane over a realized timeline.
 
     Takes the timeline rather than a world and a seed, so a realization can
     never be paired with a schedule it did not come from: the clock, the
     maintenance calendar and the master seed all arrive together.
+
+    `responder`, when given, is the fab's response layer (`fabsim.response`).
+    It is shown each chamber's latent values as the walk passes them and may
+    schedule a repair; the walk then applies that repair's recovery when its
+    window ends, exactly as it applies a PM's or a breakdown's. This module
+    knows nothing about alarms, thresholds or escalation — it knows that
+    maintenance recovers latents, and the responder knows when maintenance
+    happens. Neither of them knows why.
     """
     world = timeline.world
     rngs = Substreams(timeline.seed)
     grid = LatentGrid.for_horizon(timeline.horizon_minutes)
     step_days = grid.step_minutes / MINUTES_PER_DAY
     latents = world.observation.latents
+    recovery_policy = world.response.recovery
 
     # Each activation's drive is computed once: it does not depend on the
     # chamber, because a mechanism is never told which chamber it is on.
@@ -558,7 +656,16 @@ def realize(timeline: Timeline, *,
 
     for chamber in world.chambers:
         tool = world.tool(chamber.tool_id)
-        pm_windows = _pm_resets(timeline, chamber.chamber_id, grid)
+        scheduled = _chamber_maintenance(timeline, chamber.chamber_id, grid)
+        pm_rngs: dict[str, Any] = {}
+        states: dict[str, _LatentState] = {}
+        nulls: dict[str, _LatentState] = {}
+        noises: dict[str, Sequence[float]] = {}
+        chamber_drives: dict[str, list[float]] = {}
+        recorded: dict[str, list[float]] = {latent: [] for latent in latents}
+        recorded_null: dict[str, list[float]] = {latent: []
+                                                 for latent in latents}
+
         for latent in latents:
             dynamics = world.latent(latent)
 
@@ -578,56 +685,87 @@ def realize(timeline: Timeline, *,
                 added_by_distractor[index].append(
                     (chamber.chamber_id, latent, offset.distractor_component))
 
-            noise = _blocked_noise(rngs, latent, tool.tool_name,
-                                   chamber.chamber_name, grid.points)
+            noises[latent] = _blocked_noise(rngs, latent, tool.tool_name,
+                                            chamber.chamber_name, grid.points)
             init_rng = rngs.stream(f"latent.{latent}", tool.tool_name,
                                    chamber.chamber_name, "init")
-
-            reset_map: dict[int, list[float]] = {}
             if dynamics.pm_resets():
-                reset_rng = rngs.stream(f"latent.{latent}", tool.tool_name,
-                                        chamber.chamber_name, "pm")
-                for index, minute, maint_id in pm_windows:
-                    fraction = min(1.0, max(0.0, reset_rng.gauss(
-                        dynamics.pm_recovery_mean, dynamics.pm_recovery_sd)))
-                    reset_map.setdefault(index, []).append(fraction)
-                    resets.append(LatentReset(
-                        chamber_id=chamber.chamber_id, latent=latent,
-                        minute=minute, maint_id=maint_id, fraction=fraction))
+                pm_rngs[latent] = rngs.stream(f"latent.{latent}",
+                                              tool.tool_name,
+                                              chamber.chamber_name, "pm")
 
             drive = [0.0] * grid.points
             for event in events:
                 if (event.latent == latent
                         and chamber.chamber_id in event.chamber_ids):
-                    series = drives[event.index]
-                    drive = [a + b for a, b in zip(drive, series)]
-            null = [0.0] * grid.points
+                    drive = [a + b
+                             for a, b in zip(drive, drives[event.index])]
+            chamber_drives[latent] = drive
 
             if dynamics.family == "ar1":
                 start = (float(dynamics.sigma)
                          / math.sqrt(1.0 - float(dynamics.phi) ** 2)
                          * init_rng.gauss(0.0, 1.0))
-                values = _integrate_ar1(dynamics, noise, start, drive,
-                                        reset_map, offset.total)
-                counterfactual = _integrate_ar1(dynamics, noise, start, null,
-                                                reset_map, offset.total)
             else:
                 # A random phase of the PM sawtooth, so chambers are not all
                 # spotless at minute zero — a synchronization that would be a
                 # fab-wide artefact rather than a fab.
                 start = (init_rng.random() * float(dynamics.growth_per_day)
                          * world.maintenance.pm_interval_days)
-                values = _integrate_accumulation(dynamics, noise, start, drive,
-                                                 reset_map, offset.total,
-                                                 step_days)
-                counterfactual = _integrate_accumulation(
-                    dynamics, noise, start, null, reset_map, offset.total,
-                    step_days)
+            states[latent] = _LatentState(dynamics, offset.total, start,
+                                          step_days)
+            nulls[latent] = _LatentState(dynamics, offset.total, start,
+                                         step_days)
 
+        # One forward walk of the clock. Each grid point: advance every latent,
+        # let the response layer look at where they are, then apply whatever
+        # maintenance ends here — scheduled, background or requested alike.
+        due = {index: [] for index, _m, _i, _t in scheduled}
+        for index, minute, maint_id, maint_type in scheduled:
+            due[index].append((minute, maint_id, maint_type))
+        requested: dict[int, list[tuple[int, int, str]]] = {}
+
+        for index in range(grid.points):
+            minute = grid.minute_of(index)
+            for latent in latents:
+                epsilon = noises[latent][index]
+                recorded[latent].append(
+                    states[latent].step(epsilon, chamber_drives[latent][index]))
+                recorded_null[latent].append(nulls[latent].step(epsilon, 0.0))
+
+            if responder is not None:
+                window = responder.observe(
+                    chamber, index, minute,
+                    {latent: states[latent].value for latent in latents})
+                if window is not None:
+                    ends = grid.index_at(window.end_min)
+                    if ends >= index:
+                        requested.setdefault(ends, []).append(
+                            (window.end_min, -1, "UNSCHEDULED"))
+
+            ending = due.get(index, []) + requested.get(index, [])
+            for end_minute, maint_id, maint_type in sorted(ending):
+                fractions = _recovery_fractions(
+                    world, rngs, tool.tool_name, chamber.chamber_name,
+                    latents, maint_type, end_minute, pm_rngs)
+                for latent, fraction, quality, no_fix in fractions:
+                    before = states[latent].value
+                    after = states[latent].recover(fraction)
+                    nulls[latent].recover(fraction)
+                    recorded[latent][-1] = after
+                    recorded_null[latent][-1] = nulls[latent].value
+                    resets.append(LatentReset(
+                        chamber_id=chamber.chamber_id, latent=latent,
+                        minute=end_minute, maint_id=maint_id,
+                        fraction=fraction, kind=maint_type, quality=quality,
+                        no_fix=no_fix, before=before, after=after))
+
+        for latent in latents:
             trajectories.append(LatentTrajectory(
                 grid=grid, chamber_id=chamber.chamber_id, latent=latent,
-                offset=offset.total, values=values,
-                counterfactual=counterfactual))
+                offset=states[latent].offset,
+                values=tuple(recorded[latent]),
+                counterfactual=tuple(recorded_null[latent])))
 
     by_key = {(t.chamber_id, t.latent): t for t in trajectories}
     return Realization(

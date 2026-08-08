@@ -27,6 +27,11 @@ and the stage the physics will later play on:
 * `fabsim.latent`   the hidden plane: per-chamber latent state over time, the
                     benign offsets every chamber carries, and the internal
                     `Realization` that records what actually happened
+* `fabsim.response` the fab's reaction: generic alarm rules on each chamber's
+                    own control limits, background false alarms, escalation
+                    into work orders, response-driven maintenance that blocks
+                    production, and one recovery machine for every maintenance
+                    event — scheduled, background or requested alike
 
 The observation models, the defect and yield models, the observable emitters
 and the truth artifact are later slices. Nothing in this package reads or
@@ -53,7 +58,10 @@ __all__ = ["SCHEMA_VERSION", "__version__"]
 #: 0.2.0 — Step 3A: the latent plane. New generation behaviour and a new
 #: versioned integration grid (`fabsim.latent.LATENT_GRID_MINUTES`), both of
 #: which change what a given (config, seed) realizes.
-__version__ = "0.2.0"
+#: 0.3.0 — Step 3B: the fab response. Alarms, response-driven maintenance and
+#: generic recovery at *every* maintenance event, which moves latent
+#: trajectories and adds windows to the calendar.
+__version__ = "0.3.0"
 
 #: Observable schema version, recorded in `dataset_meta` and the manifest.
 #: The schema v2 DDL is a later Phase 1 slice; the constant exists now because

@@ -56,7 +56,18 @@ The latent plane is where D1's "the code path from fault identity to yield does 
 - **F11 — benign offsets are baseline, not distractor bookkeeping.** Every tool and every chamber carries a permanent offset on every latent, drawn from the shared family, never reset by maintenance, with magnitudes reaching into the subtle-severity band. A declared `benign_offset` distractor widens an offset that was already there. If offsets existed only where one was declared, "this chamber has an offset" would be a categorical value with support only on named entities — leakage class T3 — and a null dataset would be visibly cleaner than a faulted one.
 - **Structural, not lexical.** `test_the_latent_plane_names_no_observable` and `test_the_latent_plane_imports_nothing_observable` check that no identifier or import in `latent.py` or `mechanisms/` reaches a yield, defect, alarm or measurement concept. The only output of the slice is hidden float state.
 
-**Debt carried into 3B (record it here so it is not forgotten):** only PMs currently move latent state. When fault-driven repair is wired in, **background breakdowns must move latent state too**. If only fault-driven repairs recovered a latent, "a repair after which behaviour changed" would be a perfect fault fingerprint (T3/T5) — visible on affected chambers and on no others.
+**Debt carried into 3B (record it here so it is not forgotten):** only PMs currently move latent state. When fault-driven repair is wired in, **background breakdowns must move latent state too**. If only fault-driven repairs recovered a latent, "a repair after which behaviour changed" would be a perfect fault fingerprint (T3/T5) — visible on affected chambers and on no others. **Discharged in Step 3B — see §3.2.**
+
+## 3.2 What Step 3B added: a response layer that is not a detector
+
+The fab now notices conditions and reacts to them, which is the easiest place in the simulator to build a fault detector by accident. Four properties keep it from becoming one (ADR-017), each asserted:
+
+- **The null world alarms, escalates and gets repaired.** A world with nothing wrong in it raises alarms on most of its chambers — background false alarms *and* condition alarms from natural wander — and some of those escalate into unscheduled maintenance. If they did not, the presence of an alarm or a repair would *be* the answer.
+- **One recovery machine, discharging the 3A debt.** Scheduled PM, background breakdown and requested repair all move latent state. The unscheduled kinds share one distribution (Beta(8, 2), 10% no-fix) and one code path that is never told which kind it is serving, so "behaviour changed after a repair" is not a separator (T3/T5).
+- **A requested repair is observationally an ordinary breakdown.** Same `UNSCHEDULED` type, same technician roster, same action-code vocabulary (D2). Neither `Alarm` nor `MaintenanceWindow` has a field for a cause — which also means a later emitter has nothing to fill from the hidden plane by accident.
+- **The chart absorbs the benign offset.** Alarm limits are the chamber's own, set at qualification. Without that, rule F11's permanent offsets would have produced permanently-alarming chambers — turning the structure that exists to prevent a fingerprint into one.
+
+Two further guards are static: the alarm/escalation/repair decision path is checked by AST to contain no mechanism, event, severity, counterfactual or departure identifier, and no tool or chamber literal; and a scenario's `response` block is proven inert (two scenarios differing only in it produce byte-identical responses).
 
 ## 4. Process rules (human-side leakage)
 

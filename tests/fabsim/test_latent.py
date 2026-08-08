@@ -521,14 +521,22 @@ def test_param_drift_is_a_trend_buried_in_wander_not_a_ruler(world):
 
 def test_particle_load_saws_between_cleans(realization, world):
     """The baseline sawtooth of `CAUSAL_MECHANISM_MODEL.md` §3, on every
-    chamber — not only where an excursion was configured."""
+    chamber — not only where an excursion was configured.
+
+    A *PM* is the clean that makes the tooth: it takes the load all the way
+    back to the chamber's own residual. An unscheduled repair reduces it by
+    whatever the intervention was worth, which is a different claim and is
+    tested with the recovery model.
+    """
     grid = realization.grid
     checked = 0
     for chamber in world.chambers:
         trajectory = realization.trajectory(chamber.chamber_id,
                                             "particle_load")
         offset = realization.offset(chamber.chamber_id, "particle_load").total
-        resets = realization.resets_of(chamber.chamber_id, "particle_load")
+        resets = [r for r in realization.resets_of(chamber.chamber_id,
+                                                   "particle_load")
+                  if r.kind == "PM"]
         for reset in resets:
             index = grid.index_at(reset.minute)
             if index < 24 or index >= grid.points - 1:
@@ -569,7 +577,8 @@ def test_a_particle_excursion_climbs_faster_than_the_baseline(world):
 
 def test_a_pm_cleans_particle_load_completely(realization, world):
     assert world.latent("particle_load").pm_recovery_mean == 1.0
-    resets = [r for r in realization.resets if r.latent == "particle_load"]
+    resets = [r for r in realization.resets
+              if r.latent == "particle_load" and r.kind == "PM"]
     assert resets
     assert all(r.fraction == 1.0 for r in resets)
 
@@ -581,7 +590,7 @@ def test_a_pm_partly_recentres_param_bias(realization, world):
     dynamics = world.latent("param_bias")
     assert (dynamics.pm_recovery_mean, dynamics.pm_recovery_sd) == (0.7, 0.1)
     fractions = [r.fraction for r in realization.resets
-                 if r.latent == "param_bias"]
+                 if r.latent == "param_bias" and r.kind == "PM"]
     assert len(fractions) > 20
     assert 0.6 < st.mean(fractions) < 0.8
     assert len(set(fractions)) == len(fractions)     # drawn, not constant
@@ -589,7 +598,7 @@ def test_a_pm_partly_recentres_param_bias(realization, world):
     grid = realization.grid
     ratios = []
     for reset in realization.resets:
-        if reset.latent != "param_bias":
+        if reset.latent != "param_bias" or reset.kind != "PM":
             continue
         index = grid.index_at(reset.minute)
         if index < 2 or index >= grid.points - 2:
@@ -606,19 +615,34 @@ def test_a_pm_does_not_touch_edge_uniformity(realization, world):
     """Hardware is not fixed by cleaning (`CAUSAL_MECHANISM_MODEL.md` §6)."""
     assert world.latent("edge_uniformity").pm_recovery_mean == 0.0
     assert not [r for r in realization.resets
-                if r.latent == "edge_uniformity"]
+                if r.latent == "edge_uniformity" and r.kind == "PM"]
 
 
 def test_a_pm_does_not_survive_into_a_fault_it_cannot_reach(world):
-    """An edge-uniformity fault runs straight through every PM in the window."""
+    """An edge-uniformity fault runs straight through every PM in the window.
+
+    Only through PMs. An *unscheduled* window does reach the hardware — that
+    is what a repair is — so the assertion is scoped to the stretch where no
+    unscheduled work happened, which is the stretch the claim is about.
+    """
     faulted = realized(world, events=[EDGE_EVENT])
     chamber = target_chamber(world, EDGE_EVENT)
     departure = faulted.trajectory(chamber, "edge_uniformity").departure()
     magnitude = faulted.mechanisms[0].realized_magnitude
     grid = faulted.grid
     settled = grid.index_at((EDGE_EVENT["onset_day"] + 14) * MINUTES_PER_DAY)
+
+    repairs = [grid.index_at(r.minute)
+               for r in faulted.resets_of(chamber, "edge_uniformity")
+               if r.kind == "UNSCHEDULED" and r.fraction > 0.0]
+    end = min([index for index in repairs if index > settled],
+              default=grid.points)
+    assert end > settled
+    pms = [r for r in faulted.resets_of(chamber, "edge_uniformity")
+           if r.kind == "PM"]
+    assert not pms                       # a PM never touches this latent
     assert all(value == pytest.approx(magnitude, rel=1e-6)
-               for value in departure[settled:])
+               for value in departure[settled:end])
 
 
 def test_a_pm_does_not_reset_the_benign_offset(realization, world):
@@ -626,7 +650,7 @@ def test_a_pm_does_not_reset_the_benign_offset(realization, world):
     grid = realization.grid
     checked = 0
     for reset in realization.resets:
-        if reset.latent != "particle_load":
+        if reset.latent != "particle_load" or reset.kind != "PM":
             continue
         index = grid.index_at(reset.minute)
         if index >= grid.points - 1:
@@ -640,18 +664,72 @@ def test_a_pm_does_not_reset_the_benign_offset(realization, world):
     assert checked > 30
 
 
-def test_only_pms_move_latents_at_this_gate(realization, timeline):
-    """Fault-driven repair is 3B. Unscheduled windows exist in the timeline
-    and deliberately do not reach the latent plane yet — bringing the reset
-    forward without its trigger would have made "a repair moved a latent" a
-    fault fingerprint, because only faults would ever cause one.
+def test_every_kind_of_maintenance_moves_latents(realization, timeline):
+    """Step 3B's carried-forward condition, and the reason it was carried.
+
+    Step 3A applied recovery only at PMs and recorded the debt: if a repair
+    moved latent state and a background breakdown did not, "behaviour changed
+    after a repair" would be a perfect fault fingerprint, because only faulted
+    chambers would ever have had the first kind. Both kinds now go through one
+    machine, and this is a **null** realization — so the unscheduled recoveries
+    below happened on chambers where nothing is wrong at all.
     """
-    pm_ids = {w.maint_id for w in timeline.maintenance
-              if w.maint_type == "PM"}
-    unscheduled = {w.maint_id for w in timeline.maintenance
-                   if w.maint_type == "UNSCHEDULED"}
-    assert unscheduled
-    assert {r.maint_id for r in realization.resets} <= pm_ids
+    assert realization.mechanisms == ()          # nothing is wrong anywhere
+    kinds = {r.kind for r in realization.resets}
+    assert kinds == {"PM", "UNSCHEDULED"}
+
+    by_id = {w.maint_id: w for w in timeline.maintenance}
+    for reset in realization.resets:
+        assert by_id[reset.maint_id].maint_type == reset.kind
+
+    unscheduled = [r for r in realization.resets if r.kind == "UNSCHEDULED"]
+    assert len({r.chamber_id for r in unscheduled}) > 3
+    # A breakdown reaches every latent, including the one a PM cannot touch.
+    assert {r.latent for r in unscheduled} == set(realization.latents)
+
+
+def test_an_unscheduled_recovery_is_one_quality_spread_over_latents(
+        realization, world):
+    """One physical intervention, one quality draw, per-latent efficacy.
+
+    The shape matters: if each latent drew its own recovery, a repair's effect
+    would be a bundle of independent numbers rather than one event, and the
+    per-latent differences a diagnosis engine sees would be noise instead of
+    physics.
+    """
+    by_event: dict[tuple[int, int], list] = {}
+    for reset in realization.resets:
+        if reset.kind == "UNSCHEDULED":
+            by_event.setdefault((reset.chamber_id, reset.minute),
+                                []).append(reset)
+    assert by_event
+    for resets in by_event.values():
+        assert len(resets) == len(realization.latents)
+        assert len({r.quality for r in resets}) == 1
+        assert len({r.no_fix for r in resets}) == 1
+        for reset in resets:
+            efficacy = world.latent(reset.latent).repair_efficacy
+            assert reset.fraction == pytest.approx(reset.quality * efficacy)
+
+
+def test_some_repairs_achieve_nothing(realization, world):
+    """`CAUSAL_MECHANISM_MODEL.md` §6: a 10% chance the repair fixes nothing.
+
+    Honest ambiguity — "did the intervention work?" has to be a real question,
+    and a fab where every repair works is one where it is not.
+    """
+    assert world.response.recovery.no_fix_probability == pytest.approx(0.1)
+    events = {(r.chamber_id, r.minute): r for r in realization.resets
+              if r.kind == "UNSCHEDULED"}
+    assert events
+    no_fix = [r for r in events.values() if r.no_fix]
+    assert no_fix
+    assert all(r.fraction == 0.0 and r.quality == 0.0 for r in no_fix)
+    assert len(no_fix) < len(events) / 2
+
+    worked = [r.quality for r in events.values() if not r.no_fix]
+    assert 0.6 < st.mean(worked) < 0.95      # Beta(8, 2) has mean 0.8
+    assert max(worked) < 1.0                 # never a perfect restoration
 
 
 # ------------------------------------------------------- severity calibration

@@ -80,6 +80,15 @@ Field intent:
 - **latent_summaries** — weekly-resolution latent trajectories for affected entities: enough for onset-error scoring and post-hoc analysis without storing full state history.
 - The null scenario emits `events: []` with distractors populated — an empty answer key is still an answer key.
 
+### 3.1 What the hidden plane holds as of Step 3B
+
+`truth.json` is still unwritten; what follows describes the in-memory `Realization` and `FabResponse` the emitter will read when it lands.
+
+- **`Realization`** (hidden): latent trajectories and their mechanism-free counterfactuals, the permanent benign offsets, the realized mechanism records, the declared distractors, and — new in 3B — a `LatentReset` for **every** maintenance event, carrying its kind, the drawn intervention quality, whether the draw was a no-fix, and the latent value before and after. `latent_summaries` in §3 above is a weekly projection of the trajectories.
+- **`FabResponse`** splits the planes by name. `alarms` and `maintenance` are *observable-shaped* and carry no cause: `Alarm` is `(alarm_id, tool_id, chamber_id, minute, code, severity, message)` and nothing else, and `MaintenanceWindow` has no field for why it exists. The reasons live beside them in `alarm_details` (`condition` versus `background`, the signal, the realized departure in σ) and `repairs` (which alarms escalated, when the order was raised, the drawn delay).
+
+The split is structural rather than conventional: a later emitter handed `alarms` and `maintenance` has nothing to serialize that would leak, because the fields do not exist on those records. `events[].maintenance_response` in the schema above is assembled from `repairs`, on the hidden side of the boundary.
+
 ## 4. Access rules (the separation that must hold)
 
 | Actor | fab.db / dump / manifest | scenarios/*.json | truth/truth.json |

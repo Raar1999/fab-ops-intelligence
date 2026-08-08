@@ -102,6 +102,8 @@ __all__ = [
     "MaintenancePolicy",
     "MechanismPolicy",
     "MinuteDistribution",
+    "RecoveryPolicy",
+    "ResponsePolicy",
     "ObservationChannel",
     "ObservationPolicy",
     "Operator",
@@ -219,7 +221,8 @@ _TEMPLATE_REQUIRED = (HEADER_KEY, "name", "time_origin", "wafers_per_lot",
                       "operation_types", "layers", "products", "process_steps",
                       "process_flows", "tools", "operators", "routing",
                       "lot_release", "queue", "maintenance", "observation",
-                      "alarms", "die_grid", "latents", "mechanisms")
+                      "alarms", "die_grid", "latents", "mechanisms",
+                      "response")
 _TEMPLATE_OPTIONAL = ("description", "recipes")
 _TEMPLATE_KEYS = _TEMPLATE_REQUIRED + _TEMPLATE_OPTIONAL
 
@@ -271,7 +274,7 @@ _DIE_GRID_OPTIONAL = ("origin", "index_order", "partial_die_policy")
 _DIE_GRID_KEYS = _DIE_GRID_REQUIRED + _DIE_GRID_OPTIONAL
 
 _LATENT_COMMON = ("family", "severity_reference", "pm_recovery",
-                  "benign_tool_sd", "benign_chamber_sd")
+                  "repair_efficacy", "benign_tool_sd", "benign_chamber_sd")
 _LATENT_FAMILY_KEYS = {
     "ar1": ("phi", "sigma"),
     "accumulation": ("growth_per_day", "sigma_per_day", "floor"),
@@ -280,6 +283,13 @@ _PM_RECOVERY_KEYS = ("mean", "sd")
 
 _MECHANISMS_GLOBAL = ("severity_jitter_sd", "profiles")
 _PROFILE_DEFAULT_KEYS = ("intermittent_period_days", "intermittent_duty")
+
+_RESPONSE_KEYS = ("baseline_alpha", "baseline_warmup_days",
+                  "alarm_refractory_hours",
+                  "escalation_count", "escalation_window_days",
+                  "repair_delay_days_mean", "repair_cooldown_days",
+                  "repair_duration_hours", "recovery")
+_RECOVERY_KEYS = ("quality_alpha", "quality_beta", "no_fix_probability")
 
 #: Names that are code-level identifiers (template and flow names) versus names
 #: that are shop-floor vocabulary (``ETCH-02``, ``B``, ``OP-101``).
@@ -859,6 +869,14 @@ class LatentDynamics:
     pm_recovery_mean: float
     pm_recovery_sd: float
 
+    #: How much of an unscheduled repair's *quality* reaches this subsystem,
+    #: in [0, 1]. One repair has one quality (`ResponsePolicy.recovery`); what
+    #: differs between latents is how much of it lands — a seal replacement
+    #: helps the hardware more than it helps a delivery calibration. This is
+    #: what lets one generic recovery machine serve every maintenance event
+    #: without ever asking why the event happened.
+    repair_efficacy: float
+
     #: Spread of the permanent benign offsets, in units of
     #: `severity_reference`. Every tool and every chamber gets one; the
     #: magnitudes overlap the subtle-severity band on purpose (rule F11).
@@ -868,6 +886,66 @@ class LatentDynamics:
     def pm_resets(self) -> bool:
         """Whether a PM moves this latent at all."""
         return self.pm_recovery_mean > 0.0 or self.pm_recovery_sd > 0.0
+
+
+@dataclass(frozen=True)
+class RecoveryPolicy:
+    """How well a repair works — one distribution, for every repair alike.
+
+    `CAUSAL_MECHANISM_MODEL.md` §6: recovery fraction ~ Beta(8, 2) (mean 0.8),
+    with a 10% chance the repair fixes nothing. The draw is the *quality of the
+    intervention*, taken once per maintenance event and shared across every
+    latent that event touches; `LatentDynamics.repair_efficacy` decides how
+    much of that quality reaches each subsystem.
+
+    One distribution for every unscheduled event is the point. If a
+    fault-driven repair recovered differently from a background breakdown,
+    "behaviour changed after a repair" would separate faulted chambers from
+    healthy ones perfectly — leakage classes T3 and T5 — because only faulted
+    chambers would ever have had the first kind (ADR-017).
+    """
+
+    quality_alpha: float
+    quality_beta: float
+    #: Probability that an intervention achieves nothing at all. Honest
+    #: ambiguity: "did the repair work?" must be a real question.
+    no_fix_probability: float
+
+
+@dataclass(frozen=True)
+class ResponsePolicy:
+    """How the fab notices a condition and reacts to it.
+
+    Every constant here is a property of *the fab*, not of a scenario and not
+    of a chamber: the same thresholds, the same escalation rule, the same
+    delay and the same recovery apply everywhere, so the response layer cannot
+    become a fault detector by construction (ADR-017).
+    """
+
+    #: EWMA smoothing per grid step for a signal's own running baseline. The
+    #: fab compares a chamber against its own recent history, which is what
+    #: real FDC limits do — and what stops a chamber's permanent benign offset
+    #: from becoming a permanent alarm.
+    baseline_alpha: float
+    #: How long a chamber watches before it is allowed to judge. Limits
+    #: computed from three samples would fire on the fourth.
+    baseline_warmup_days: float
+    #: Quiet period after a code fires on a chamber, so one excursion is one
+    #: complaint rather than one per sample.
+    alarm_refractory_hours: float
+    #: Alarms on one chamber within `escalation_window_days` that add up to a
+    #: work order. Applies to background false alarms too — an unlucky healthy
+    #: chamber gets maintenance, which is exactly the symmetry that keeps a
+    #: repair from being a fault fingerprint.
+    escalation_count: int
+    escalation_window_days: float
+    #: Mean of the exponential lag between the work order and the repair
+    #: starting: the human loop of noticing, scheduling and acting.
+    repair_delay_days_mean: float
+    #: Quiet period after a work order, so one condition is one intervention.
+    repair_cooldown_days: float
+    repair_duration: HourRange
+    recovery: RecoveryPolicy
 
 
 @dataclass(frozen=True)
@@ -970,6 +1048,7 @@ class World:
     die_grid: DieGridPolicy
     latent_dynamics: tuple[LatentDynamics, ...]
     mechanism_policy: MechanismPolicy
+    response: ResponsePolicy
     #: SHA-256 of the template's semantic content — one of the inputs of the
     #: dataset build fingerprint (`SCENARIO_SPECIFICATION.md` §5). A world is
     #: as much an input to a dataset as its scenario is, so a dataset built
@@ -2159,6 +2238,9 @@ def _build_latents(raw: Any, latents: Sequence[str]
             severity_reference=_as_number(
                 _require(entry, "severity_reference", path),
                 _at(path, "severity_reference"), greater_than=0.0),
+            repair_efficacy=_as_number(
+                _require(entry, "repair_efficacy", path),
+                _at(path, "repair_efficacy"), minimum=0.0, maximum=1.0),
             pm_recovery_mean=_as_number(
                 _require(recovery, "mean", recovery_path),
                 _at(recovery_path, "mean"), minimum=0.0, maximum=1.0),
@@ -2247,6 +2329,63 @@ def _build_mechanisms(raw: Any) -> MechanismPolicy:
             _at(profile_path, "intermittent_duty"), greater_than=0.0,
             less_than=1.0),
         defaults=defaults,
+    )
+
+
+def _build_response(raw: Any) -> ResponsePolicy:
+    """How the fab notices conditions and reacts — one policy, fab-wide.
+
+    There is no per-scenario, per-mechanism or per-chamber variant of any of
+    these numbers, and that absence is the design (ADR-017): the response
+    engine cannot treat a faulted chamber differently from a healthy one
+    because it has nothing to treat it differently *with*.
+    """
+    obj = _as_object(raw, "response")
+    _reject_unknown(obj, _RESPONSE_KEYS, "response")
+
+    recovery_path = "response.recovery"
+    recovery = _as_object(_require(obj, "recovery", "response"), recovery_path)
+    _reject_unknown(recovery, _RECOVERY_KEYS, recovery_path)
+
+    return ResponsePolicy(
+        # α = 1 would make the baseline the last sample and nothing would ever
+        # look like a departure from it.
+        baseline_alpha=_as_number(
+            _require(obj, "baseline_alpha", "response"),
+            "response.baseline_alpha", greater_than=0.0, less_than=1.0),
+        baseline_warmup_days=_as_number(
+            _require(obj, "baseline_warmup_days", "response"),
+            "response.baseline_warmup_days", greater_than=0.0),
+        alarm_refractory_hours=_as_number(
+            _require(obj, "alarm_refractory_hours", "response"),
+            "response.alarm_refractory_hours", minimum=0.0),
+        escalation_count=_as_int(
+            _require(obj, "escalation_count", "response"),
+            "response.escalation_count", minimum=1),
+        escalation_window_days=_as_number(
+            _require(obj, "escalation_window_days", "response"),
+            "response.escalation_window_days", greater_than=0.0),
+        repair_delay_days_mean=_as_number(
+            _require(obj, "repair_delay_days_mean", "response"),
+            "response.repair_delay_days_mean", greater_than=0.0),
+        repair_cooldown_days=_as_number(
+            _require(obj, "repair_cooldown_days", "response"),
+            "response.repair_cooldown_days", minimum=0.0),
+        repair_duration=_build_hours(
+            _require(obj, "repair_duration_hours", "response"),
+            "response.repair_duration_hours"),
+        recovery=RecoveryPolicy(
+            quality_alpha=_as_number(
+                _require(recovery, "quality_alpha", recovery_path),
+                _at(recovery_path, "quality_alpha"), greater_than=0.0),
+            quality_beta=_as_number(
+                _require(recovery, "quality_beta", recovery_path),
+                _at(recovery_path, "quality_beta"), greater_than=0.0),
+            no_fix_probability=_as_number(
+                _require(recovery, "no_fix_probability", recovery_path),
+                _at(recovery_path, "no_fix_probability"), minimum=0.0,
+                less_than=1.0),
+        ),
     )
 
 
@@ -2452,5 +2591,6 @@ def build_world(raw: Mapping[str, Any]) -> World:
         latent_dynamics=_build_latents(_require(obj, "latents", ""),
                                        observation.latents),
         mechanism_policy=_build_mechanisms(_require(obj, "mechanisms", "")),
+        response=_build_response(_require(obj, "response", "")),
         world_sha256=world_sha256(obj),
     )

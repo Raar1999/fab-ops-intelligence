@@ -1163,6 +1163,90 @@ def test_rejects_invalid_mechanism_globals(make_template, overrides, path):
     assert excinfo.value.path == path
 
 
+# --------------------------------------------------- response contract (3B)
+
+
+def test_the_baseline_declares_one_fab_wide_response_policy(world):
+    """ADR-017: no per-scenario, per-mechanism or per-chamber variant."""
+    policy = world.response
+    assert 0.0 < policy.baseline_alpha < 1.0
+    assert policy.baseline_warmup_days > 0.0
+    assert policy.escalation_count > 1
+    assert policy.escalation_window_days > 0.0
+    assert policy.repair_delay_days_mean > 0.0
+    assert policy.repair_duration.maximum >= policy.repair_duration.minimum
+
+
+def test_recovery_follows_the_designs_distribution(world):
+    """`CAUSAL_MECHANISM_MODEL.md` §6: Beta(8, 2), 10% no-fix."""
+    recovery = world.response.recovery
+    assert (recovery.quality_alpha, recovery.quality_beta) == (8.0, 2.0)
+    assert recovery.no_fix_probability == pytest.approx(0.1)
+
+
+def test_every_latent_declares_how_much_of_a_repair_reaches_it(world):
+    for dynamics in world.latent_dynamics:
+        assert 0.0 <= dynamics.repair_efficacy <= 1.0
+    # A repair reaches the hardware a PM cannot touch — which is the whole
+    # reason a breakdown and a fault repair can share one machine.
+    assert world.latent("edge_uniformity").repair_efficacy > 0.0
+    assert not world.latent("edge_uniformity").pm_resets()
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"baseline_alpha": 0.0}, "response.baseline_alpha"),
+    ({"baseline_alpha": 1.0}, "response.baseline_alpha"),
+    ({"baseline_warmup_days": 0.0}, "response.baseline_warmup_days"),
+    ({"escalation_count": 0}, "response.escalation_count"),
+    ({"escalation_count": 2.5}, "response.escalation_count"),
+    ({"escalation_window_days": 0.0}, "response.escalation_window_days"),
+    ({"repair_delay_days_mean": 0.0}, "response.repair_delay_days_mean"),
+    ({"repair_cooldown_days": -1.0}, "response.repair_cooldown_days"),
+    ({"escalation_policy": "aggressive"}, "response"),
+])
+def test_rejects_an_invalid_response_policy(make_template, overrides, path):
+    raw = make_template()
+    raw["response"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"quality_alpha": 0.0}, "response.recovery.quality_alpha"),
+    ({"quality_beta": -1.0}, "response.recovery.quality_beta"),
+    ({"no_fix_probability": 1.0}, "response.recovery.no_fix_probability"),
+    ({"no_fix_probability": -0.1}, "response.recovery.no_fix_probability"),
+    ({"always_works": True}, "response.recovery"),
+])
+def test_rejects_an_invalid_recovery_policy(make_template, overrides, path):
+    raw = make_template()
+    raw["response"]["recovery"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("efficacy", [-0.1, 1.5, "0.9"])
+def test_rejects_an_invalid_repair_efficacy(make_template, efficacy):
+    raw = make_template()
+    raw["latents"]["param_bias"]["repair_efficacy"] = efficacy
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == "latents.param_bias.repair_efficacy"
+
+
+def test_the_response_policy_has_no_per_entity_knob(world):
+    """The absence *is* the design: an engine with nothing to treat a faulted
+    chamber differently with cannot treat it differently."""
+    from fabsim.world import ResponsePolicy
+
+    fields = set(ResponsePolicy.__dataclass_fields__)
+    forbidden = {"tool", "tool_name", "chamber", "chamber_name", "mechanism",
+                 "severity", "scenario", "event", "target"}
+    assert not (fields & forbidden)
+
+
 # --------------------------------------------------------- world identity
 
 
@@ -1190,6 +1274,10 @@ def test_the_same_world_hashes_the_same_way(template):
                  id="latent-dynamics"),
     pytest.param(lambda raw: raw["mechanisms"]["particle_excursion"].update(
         escalation_days=5.0), id="mechanism-constants"),
+    pytest.param(lambda raw: raw["response"].update(escalation_count=2),
+                 id="response-policy"),
+    pytest.param(lambda raw: raw["response"]["recovery"].update(
+        no_fix_probability=0.2), id="recovery-policy"),
 ])
 def test_a_semantic_change_changes_the_world_hash(template, mutate):
     """Anything that can move emitted data must move the identity with it."""

@@ -82,6 +82,8 @@ __all__ = [
     "Timeline",
     "TimelineEvent",
     "Wafer",
+    "maintenance_occupancy",
+    "order_maintenance",
     "simulate",
     "simulate_scenario",
 ]
@@ -470,6 +472,59 @@ def _schedule_maintenance(world: World, horizon_min: int, rngs: Substreams
     return windows, occupied
 
 
+def order_maintenance(windows: Iterable[MaintenanceWindow]
+                      ) -> tuple[MaintenanceWindow, ...]:
+    """Renumber a calendar so ids follow the clock, densely, from 1.
+
+    The response layer inserts repairs into a calendar the scheduler already
+    produced; this puts the result back into the order `_schedule_maintenance`
+    guarantees, so "maintenance 41" means "the 41st thing that happened"
+    however the window got there.
+    """
+    ordered = sorted(
+        windows,
+        key=lambda w: (w.start_min, w.tool_id,
+                       -1 if w.chamber_id is None else w.chamber_id,
+                       w.maint_type, w.end_min))
+    return tuple(
+        MaintenanceWindow(maint_id=index + 1, tool_id=w.tool_id,
+                          chamber_id=w.chamber_id, maint_type=w.maint_type,
+                          start_min=w.start_min, end_min=w.end_min,
+                          technician=w.technician, action_code=w.action_code)
+        for index, w in enumerate(ordered)
+    )
+
+
+def maintenance_occupancy(world: World, windows: Iterable[MaintenanceWindow],
+                          horizon_min: int
+                          ) -> dict[int, list[tuple[int, int, str]]]:
+    """Rebuild per-chamber blocked intervals from a maintenance calendar.
+
+    The inverse of what `_schedule_maintenance` accumulates as it draws, so a
+    calendar handed in from outside blocks production exactly as one drawn
+    here does — including the QUAL tail every window carries.
+    """
+    qual_min = max(0, int(round(world.maintenance.qual_duration_hours * 60.0)))
+    occupied: dict[int, list[tuple[int, int, str]]] = {
+        chamber.chamber_id: [] for chamber in world.chambers}
+    for window in windows:
+        chambers = ([window.chamber_id] if window.chamber_id is not None
+                    else [c.chamber_id
+                          for c in world.chambers_of(window.tool_id)])
+        state = "PM" if window.maint_type == "PM" else "DOWN"
+        qual_end = min(window.end_min + qual_min, horizon_min)
+        for chamber_id in chambers:
+            if window.end_min > window.start_min:
+                occupied[chamber_id].append(
+                    (window.start_min, window.end_min, state))
+            if qual_end > window.end_min:
+                occupied[chamber_id].append(
+                    (window.end_min, qual_end, "QUAL"))
+    for intervals in occupied.values():
+        intervals.sort()
+    return occupied
+
+
 def _release_lots(world: World, lots: int, horizon_min: int,
                   rngs: Substreams) -> tuple[tuple[Lot, ...],
                                              tuple[Wafer, ...]]:
@@ -682,7 +737,9 @@ def _build_events(lots: Sequence[Lot], runs: Sequence[Run],
 
 
 def simulate(world: World, *, lots: int, horizon_days: int, seed: int,
-             dedications: Sequence[Dedication] | None = None) -> Timeline:
+             dedications: Sequence[Dedication] | None = None,
+             maintenance: Sequence[MaintenanceWindow] | None = None
+             ) -> Timeline:
     """Run the clock over `world` and return the realized timeline.
 
     The scheduler always advances whichever wafer is ready earliest (ties by
@@ -699,6 +756,15 @@ def simulate(world: World, *, lots: int, horizon_days: int, seed: int,
     a scenario means. They are the only thing a scenario tells the timeline
     beyond its size and its seed, and they are observable policy rather than
     the answer.
+
+    `maintenance` replaces the calendar this function would otherwise draw.
+    Omitted — the Step 2 path, and what every scenario got before the response
+    layer existed — it schedules PM and breakdowns itself. Supplied, it takes
+    the calendar as given and lays production out around it: that is how a
+    response-driven repair comes to block production without this scheduler
+    learning anything about why the repair happened (`fabsim.response`, and
+    ADR-017). The calendar is used verbatim, ids included, so the response
+    layer and the timeline agree on which window is which.
     """
     validate_master_seed(seed)
     if not isinstance(lots, int) or isinstance(lots, bool) or lots < 1:
@@ -713,7 +779,11 @@ def simulate(world: World, *, lots: int, horizon_days: int, seed: int,
     active_dedications = (world.routing.dedications if dedications is None
                           else tuple(dedications))
 
-    maintenance, occupied = _schedule_maintenance(world, horizon_min, rngs)
+    if maintenance is None:
+        maintenance, occupied = _schedule_maintenance(world, horizon_min, rngs)
+    else:
+        maintenance = tuple(maintenance)
+        occupied = maintenance_occupancy(world, maintenance, horizon_min)
     blocks = {chamber_id: _merge((start, end)
                                  for start, end, _state in intervals)
               for chamber_id, intervals in occupied.items()}

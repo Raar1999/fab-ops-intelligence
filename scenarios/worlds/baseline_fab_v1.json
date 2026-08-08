@@ -404,6 +404,7 @@
       "phi": 0.97,
       "sigma": 0.0025,
       "severity_reference": 0.0054,
+      "repair_efficacy": 0.85,
       "pm_recovery": {"mean": 0.0, "sd": 0.0},
       "benign_tool_sd": 0.35,
       "benign_chamber_sd": 0.5
@@ -414,6 +415,7 @@
       "phi": 0.98,
       "sigma": 0.0040,
       "severity_reference": 0.0150,
+      "repair_efficacy": 0.9,
       "pm_recovery": {"mean": 0.7, "sd": 0.1},
       "benign_tool_sd": 0.35,
       "benign_chamber_sd": 0.5
@@ -425,6 +427,7 @@
       "sigma_per_day": 0.0006,
       "floor": 0.0,
       "severity_reference": 0.0159,
+      "repair_efficacy": 0.75,
       "pm_recovery": {"mean": 1.0, "sd": 0.0},
       "benign_tool_sd": 0.35,
       "benign_chamber_sd": 0.5
@@ -439,6 +442,22 @@
     "particle_excursion": {"step_fraction": 0.35, "escalation_days": 6.0},
     "benign_offset": {
       "magnitudes": {"small": 0.4, "moderate": 0.9, "large": 1.4}
+    }
+  },
+
+  "response": {
+    "baseline_alpha": 0.004,
+    "baseline_warmup_days": 10.0,
+    "alarm_refractory_hours": 24.0,
+    "escalation_count": 3,
+    "escalation_window_days": 7.0,
+    "repair_delay_days_mean": 3.0,
+    "repair_cooldown_days": 12.0,
+    "repair_duration_hours": {"min": 2.0, "max": 10.0},
+    "recovery": {
+      "quality_alpha": 8.0,
+      "quality_beta": 2.0,
+      "no_fix_probability": 0.1
     }
   }
 }
