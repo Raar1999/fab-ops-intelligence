@@ -12,14 +12,11 @@ All thresholds are deliberately loose so the tests check *direction and shape*,
 not brittle exact values.
 """
 import sqlite3
-from pathlib import Path
 
 import pytest
 
+from fabops.config import DEMO_SUSPECT_TOOL as SUSPECT, EDGE_ZONE_MIN_RADIUS_MM
 from fabops.db import run_query, run_view
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SUSPECT = "ETCH-02"
 
 EXPECTED_VIEWS = {
     "v_yield_by_product", "v_yield_by_node", "v_etch_tool_yield", "v_defect_zone",
@@ -105,7 +102,7 @@ def test_edge_ring_defects_are_radially_at_edge():
         FROM v_defect_zone GROUP BY defect_type
     """).set_index("defect_type")["avg_r"]
     assert df["EDGE_RING"] > df["CENTER"]
-    assert df["EDGE_RING"] > 110  # in the 'edge' zone by construction
+    assert df["EDGE_RING"] > EDGE_ZONE_MIN_RADIUS_MM  # in the 'edge' zone by construction
 
 
 def test_all_edge_ring_defects_in_edge_zone():

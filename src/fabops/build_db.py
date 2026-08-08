@@ -16,10 +16,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = REPO_ROOT / "data"
-SQL_DIR = REPO_ROOT / "sql"
-DB_PATH = DATA_DIR / "fab.db"
+from fabops.config import DATA_DIR, DB_PATH, REPO_ROOT, SQL_DIR
 
 
 def generate_database() -> None:

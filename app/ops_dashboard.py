@@ -22,17 +22,15 @@ import pandas as pd
 import streamlit as st
 
 # Requires the package to be installed (pip install -e ".[app]"); no path hacks.
+from fabops.config import (
+    ACCENT,
+    ALERT,
+    OK,
+    TYPE_COLORS,
+    WAFER_RADIUS_MM,
+    DEMO_SUSPECT_TOOL as SUSPECT,
+)
 from fabops.db import run_query, run_view
-
-SUSPECT = "ETCH-02"
-ALERT = "#d1495b"
-OK = "#3b7a9e"
-ACCENT = "#edae49"
-WAFER_RADIUS_MM = 150.0
-TYPE_COLORS = {
-    "EDGE_RING": "#d1495b", "CENTER": "#00798c", "SCRATCH": "#edae49",
-    "PARTICLE": "#66a182", "RANDOM": "#8d99ae",
-}
 
 st.set_page_config(page_title="Fab Operations Analytics", layout="wide")
 

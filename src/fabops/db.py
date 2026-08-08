@@ -12,11 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-# Repo-root-relative default path so the package works regardless of CWD.
-# (src/fabops/db.py -> parents[2] is the repository root; the project is
-# designed to run from a source checkout via `pip install -e .`.)
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DB = REPO_ROOT / "data" / "fab.db"
+from fabops.config import DB_PATH as DEFAULT_DB
 
 
 def connect(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:

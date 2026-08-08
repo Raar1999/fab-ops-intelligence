@@ -11,13 +11,9 @@ This is the script form of notebooks/investigation.ipynb. Run with:
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-from fabops.db import run_query, run_view
 from fabops import charts
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SUSPECT = "ETCH-02"
+from fabops.config import DEMO_SUSPECT_TOOL as SUSPECT, REPO_ROOT
+from fabops.db import run_query, run_view
 
 
 def hr(title: str) -> None:

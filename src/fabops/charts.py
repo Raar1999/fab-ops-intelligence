@@ -18,26 +18,19 @@ matplotlib.use("Agg")  # headless / file output
 import matplotlib.pyplot as plt
 import numpy as np
 
+from fabops.config import (
+    ACCENT,
+    ALERT,
+    FIGURES_DIR as FIG_DIR,
+    OK,
+    REPO_ROOT,
+    TYPE_COLORS,
+    WAFER_RADIUS_MM,
+    DEMO_SUSPECT_TOOL as SUSPECT,
+)
 from fabops.db import run_query, run_view
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-FIG_DIR = REPO_ROOT / "reports" / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
-
-SUSPECT = "ETCH-02"
-ALERT = "#d1495b"     # suspect / bad
-OK = "#3b7a9e"        # everything else
-ACCENT = "#edae49"    # secondary
-WAFER_RADIUS_MM = 150.0
-
-# defect-type colour map for wafer maps
-TYPE_COLORS = {
-    "EDGE_RING": "#d1495b",
-    "CENTER": "#00798c",
-    "SCRATCH": "#edae49",
-    "PARTICLE": "#66a182",
-    "RANDOM": "#8d99ae",
-}
 
 plt.rcParams.update({
     "figure.facecolor": "white",

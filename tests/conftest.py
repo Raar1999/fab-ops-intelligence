@@ -1,11 +1,9 @@
 """Shared pytest fixtures. Builds the database once if it isn't present yet."""
 import sqlite3
-from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = REPO_ROOT / "data" / "fab.db"
+from fabops.config import DB_PATH
 
 
 @pytest.fixture(scope="session", autouse=True)
