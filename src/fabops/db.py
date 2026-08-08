@@ -13,7 +13,9 @@ from pathlib import Path
 import pandas as pd
 
 # Repo-root-relative default path so the package works regardless of CWD.
-REPO_ROOT = Path(__file__).resolve().parents[1]
+# (src/fabops/db.py -> parents[2] is the repository root; the project is
+# designed to run from a source checkout via `pip install -e .`.)
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = REPO_ROOT / "data" / "fab.db"
 
 
@@ -23,8 +25,7 @@ def connect(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     if not db_path.exists():
         raise FileNotFoundError(
             f"{db_path} not found. Build it first:\n"
-            f"    python -m src.build_db\n"
-            f"(or run `make setup`)."
+            f"    python -m fabops.build_db   (or: fabops-build / make setup)"
         )
     con = sqlite3.connect(str(db_path))
     con.execute("PRAGMA foreign_keys = ON;")

@@ -14,9 +14,6 @@ All data is synthetic (seed=42); nothing here is a real-world benchmark.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -24,11 +21,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# allow `streamlit run app/ops_dashboard.py` to find the src package
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
-
-from src.db import run_query, run_view  # noqa: E402
+# Requires the package to be installed (pip install -e ".[app]"); no path hacks.
+from fabops.db import run_query, run_view
 
 SUSPECT = "ETCH-02"
 ALERT = "#d1495b"

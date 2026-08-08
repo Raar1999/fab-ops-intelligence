@@ -6,7 +6,8 @@ Steps:
   2. Apply the star model (fact_yield).
   3. Apply the analytical view layer.
 
-Idempotent: re-running rebuilds cleanly. Run with `python -m src.build_db`.
+Re-running reapplies the star model and views; delete data/fab.db first to
+force full regeneration. Run with `python -m fabops.build_db` (or fabops-build).
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data"
 SQL_DIR = REPO_ROOT / "sql"
 DB_PATH = DATA_DIR / "fab.db"

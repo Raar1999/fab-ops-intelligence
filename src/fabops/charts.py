@@ -18,9 +18,9 @@ matplotlib.use("Agg")  # headless / file output
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.db import run_query, run_view
+from fabops.db import run_query, run_view
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 FIG_DIR = REPO_ROOT / "reports" / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 

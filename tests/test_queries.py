@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.db import run_query, run_view
+from fabops.db import run_query, run_view
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SUSPECT = "ETCH-02"

@@ -1,14 +1,5 @@
-# Core analysis stack
-pandas>=2.0
-numpy>=1.24
-matplotlib>=3.7
-
-# Interactive dashboard
-streamlit>=1.30
-
-# Tests
-pytest>=7.0
-
-# Notebook (to re-execute notebooks/investigation.ipynb)
-jupyter>=1.0
-nbclient>=0.8
+# Dependencies are declared in pyproject.toml (single source of truth).
+# This file is kept as the conventional entry point:
+#     pip install -r requirements.txt
+# installs the package editable with the dashboard, notebook, and test extras.
+-e .[app,notebook,dev]

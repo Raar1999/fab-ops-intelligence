@@ -48,14 +48,14 @@ The full narrative — with code, tables, and inline charts — lives in
 ## Quickstart
 
 ```bash
-# 1. install
-pip install -r requirements.txt
+# 1. install (editable package + dashboard/notebook/test extras)
+pip install -e ".[app,notebook,dev]"
 
 # 2. build the database (generates data/fab.db, the star model, and the views)
-python -m src.build_db
+python -m fabops.build_db          # or: fabops-build
 
 # 3. run the full investigation (prints the story + regenerates all charts)
-python -m src.investigation
+python -m fabops.investigation     # or: fabops-investigate
 
 # 4. launch the interactive dashboard
 streamlit run app/ops_dashboard.py
@@ -64,24 +64,25 @@ streamlit run app/ops_dashboard.py
 pytest -q
 ```
 
-Or just use the `Makefile`: `make setup`, `make investigate`, `make app`, `make test`.
+Or just use the `Makefile`: `make install`, `make setup`, `make investigate`, `make app`, `make test`.
 
 ## What's in the box
 
 ```
 fab-operations-analytics/
 ├── README.md                       # you are here
-├── requirements.txt
-├── Makefile                        # setup / investigate / app / test / charts / notebook
+├── pyproject.toml                  # packaging (src layout) + console scripts + deps
+├── requirements.txt                # convenience: installs -e .[app,notebook,dev]
+├── Makefile                        # install / setup / investigate / app / test / charts / notebook
 ├── data/
 │   ├── generate_fab_db.py          # deterministic synthetic-data generator (seed=42)
 │   ├── fab.db                      # built SQLite database (regenerable)
 │   └── fab_database.sql            # portable schema + INSERTs
 ├── sql/
 │   ├── star_model.sql              # fact_yield star table for fast BI aggregation
-│   ├── views.sql                   # 12 analytical views (the logic lives here)
+│   ├── views.sql                   # the analytical views (the logic lives here)
 │   └── rca_queries.sql             # the investigation as a documented query library
-├── src/
+├── src/fabops/
 │   ├── db.py                       # data-access layer (SQL → pandas)
 │   ├── build_db.py                 # one command to stand up the DB + views
 │   ├── charts.py                   # every figure, rendered with matplotlib
@@ -92,7 +93,8 @@ fab-operations-analytics/
 │   └── ops_dashboard.py            # Streamlit dashboard (Overview / Yield / RCA / Maps)
 ├── tests/
 │   ├── conftest.py
-│   └── test_queries.py             # 26 tests: schema integrity + the RCA findings hold
+│   └── test_queries.py             # schema integrity + the RCA findings hold
+├── docs/                           # audit, architecture decisions, roadmap
 └── reports/figures/                # generated charts (embedded above)
 ```
 

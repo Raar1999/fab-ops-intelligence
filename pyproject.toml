@@ -1,0 +1,36 @@
+# Packaging for the fab-ops-analytics baseline (Phase 0).
+# The audit's P0 defect was that the documented `pytest -q` failed on a clean
+# clone because the code was an uninstallable folder named `src`. The fix is a
+# proper src-layout package: `pip install -e ".[app,notebook,dev]"` and every
+# documented command works from anywhere.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fab-ops-analytics"
+version = "0.1.0"
+description = "Semiconductor fab operations analytics on a synthetic MES-style dataset: yield, defect, tool and maintenance intelligence with a documented root-cause investigation."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+app = ["streamlit>=1.30"]
+notebook = ["jupyter>=1.0", "nbclient>=0.8", "nbformat>=5.9"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+fabops-build = "fabops.build_db:main"
+fabops-investigate = "fabops.investigation:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

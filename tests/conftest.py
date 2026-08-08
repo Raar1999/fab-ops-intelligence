@@ -12,7 +12,7 @@ DB_PATH = REPO_ROOT / "data" / "fab.db"
 def ensure_db():
     """Build the DB + views once for the whole test session if missing."""
     if not DB_PATH.exists() or _view_count() == 0:
-        from src.build_db import main as build
+        from fabops.build_db import main as build
         build()
     yield
 

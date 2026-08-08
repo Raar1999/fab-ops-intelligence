@@ -7,16 +7,16 @@ Run this and it walks the full arc out loud:
 then renders every chart into reports/figures/.
 
 This is the script form of notebooks/investigation.ipynb. Run with:
-    python -m src.investigation
+    python -m fabops.investigation   (or: fabops-investigate)
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from src.db import run_query, run_view
-from src import charts
+from fabops.db import run_query, run_view
+from fabops import charts
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SUSPECT = "ETCH-02"
 
 

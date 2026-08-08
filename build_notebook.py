@@ -39,15 +39,12 @@ project is the **method and the SQL**, not the numbers.
 """)
 
 code(r"""
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path.cwd().parent))   # find the src package from notebooks/
-
 import matplotlib.pyplot as plt
 from IPython.display import Image, display
 
-from src.db import run_query, run_view
-from src import charts
+# Requires the package install: pip install -e ".[notebook]"
+from fabops.db import run_query, run_view
+from fabops import charts
 
 SUSPECT = "ETCH-02"
 print("data layer ready")
@@ -235,7 +232,7 @@ confirmations (defect physics + maintenance) → quantified loss → exposure si
 That arc — not any single query — is what a yield/process-data interview is really testing.
 
 ---
-*Synthetic data, `seed=42`. Reproduce everything with `python -m src.investigation`.*
+*Synthetic data, `seed=42`. Reproduce everything with `python -m fabops.investigation`.*
 """)
 
 nb["cells"] = cells
