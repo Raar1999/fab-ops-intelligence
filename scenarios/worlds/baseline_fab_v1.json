@@ -405,6 +405,7 @@
       "sigma": 0.0025,
       "severity_reference": 0.0054,
       "repair_efficacy": 0.85,
+      "radial_weight": 1.0,
       "pm_recovery": {"mean": 0.0, "sd": 0.0},
       "benign_tool_sd": 0.35,
       "benign_chamber_sd": 0.5
@@ -416,6 +417,7 @@
       "sigma": 0.0040,
       "severity_reference": 0.0150,
       "repair_efficacy": 0.9,
+      "radial_weight": 0.0,
       "pm_recovery": {"mean": 0.7, "sd": 0.1},
       "benign_tool_sd": 0.35,
       "benign_chamber_sd": 0.5
@@ -428,6 +430,7 @@
       "floor": 0.0,
       "severity_reference": 0.0159,
       "repair_efficacy": 0.75,
+      "radial_weight": 0.0,
       "pm_recovery": {"mean": 1.0, "sd": 0.0},
       "benign_tool_sd": 0.35,
       "benign_chamber_sd": 0.5

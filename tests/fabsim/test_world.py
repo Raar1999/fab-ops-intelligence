@@ -1227,6 +1227,28 @@ def test_rejects_an_invalid_recovery_policy(make_template, overrides, path):
     assert excinfo.value.path == path
 
 
+def test_every_latent_declares_how_radial_its_effect_is(world):
+    """The within-wafer shape of a latent, declared rather than inferred.
+
+    It is what lets the observation model give a uniformity fault an edge
+    signature and a delivery bias a uniform one, without the model ever
+    learning which latent is which (`CAUSAL_MECHANISM_MODEL.md` §2).
+    """
+    for dynamics in world.latent_dynamics:
+        assert 0.0 <= dynamics.radial_weight <= 1.0
+    assert world.latent("edge_uniformity").radial_weight == 1.0
+    assert world.latent("param_bias").radial_weight == 0.0
+
+
+@pytest.mark.parametrize("weight", [-0.1, 1.5, "1.0", None])
+def test_rejects_an_invalid_radial_weight(make_template, weight):
+    raw = make_template()
+    raw["latents"]["edge_uniformity"]["radial_weight"] = weight
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == "latents.edge_uniformity.radial_weight"
+
+
 @pytest.mark.parametrize("efficacy", [-0.1, 1.5, "0.9"])
 def test_rejects_an_invalid_repair_efficacy(make_template, efficacy):
     raw = make_template()
@@ -1278,6 +1300,8 @@ def test_the_same_world_hashes_the_same_way(template):
                  id="response-policy"),
     pytest.param(lambda raw: raw["response"]["recovery"].update(
         no_fix_probability=0.2), id="recovery-policy"),
+    pytest.param(lambda raw: raw["latents"]["edge_uniformity"].update(
+        radial_weight=0.5), id="radial-weight"),
 ])
 def test_a_semantic_change_changes_the_world_hash(template, mutate):
     """Anything that can move emitted data must move the identity with it."""

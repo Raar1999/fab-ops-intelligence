@@ -68,6 +68,10 @@ src/fabsim/
 │                          #   world; share-based dedication (ADR-015) [implemented]
 ├── response.py            # alarms, escalation, response-driven maintenance
 │                          #   and generic recovery (ADR-017)        [implemented]
+├── observation.py         # FDC summaries + zonal metrology from latent state,
+│                          #   recipe setpoints and the variation stack
+│                          #   (ADR-018; replaces models/parameters.py)
+│                          #                                        [implemented]
 ├── timeline.py            # the event clock: lot release, wafer step progression,
 │                          #   tool/chamber occupancy, maintenance windows
 ├── latent.py              # per-chamber latent state evolution over time, the
@@ -153,11 +157,13 @@ Stage 4 of the pipeline (the physics) is built in ordered slices, each gated on 
 | **3.0 Contracts** | the declarations the rest consume: `routing_conditions` + share-based dedication (ADR-015), the `measures`/`covers` relations (gate condition F1), the alarm, die-grid and observation configuration, and `world_sha256` in the build fingerprint | **implemented** |
 | **3A Latent plane** | per-chamber latent state on a versioned 60-minute grid, its baseline dynamics and benign offsets, the four-mechanism library, PM reset semantics, and the internal `Realization` (ADR-016) | **implemented** |
 | **3B Fab response** | generic alarm rules on the chamber's own control limits, background false alarms, escalation into work orders, response-driven maintenance that blocks production, and one recovery machine for every maintenance event (ADR-017) | **implemented** |
-| 3C Process observation | FDC summaries and metrology values from latents + the variation stack | not started |
+| **3C Process observation** | FDC summaries and zonal metrology from realized latent state through the declared sensitivity matrix, over the full variation stack (ADR-018) | **implemented** |
 | 3D Defects | intensity, origin, geometry, the noisy classifier | not started |
 | 3E Die + yield | die grid, kill model, bins, wafer yield | not started |
 
 The boundary 3.0 holds is that it declares *machinery* and never behaviour: the alarm block states thresholds and background rates but fires nothing; the die-grid block states geometry but lays out no grid; the observation block states channels, sensitivities and confusion but computes no value. A contract that named an event, a mechanism, a tool or a chamber would have pre-committed the answer before the mechanism layer existed, so none of them has a field for one.
+
+The boundary 3C holds is that a measurement is a *projection*. The observation engine reads latent trajectories, recipes and the clock, and writes numbers; it never reaches back to change latent state, and it never reads `Realization.mechanisms`, `.distractors` or `.counterfactual`. Mediation is checked exactly rather than argued: the same timeline is measured twice, once against the realized trajectories and once against their mechanism-free twins, and the difference is asserted to equal the latent departure times the declared sensitivity times the channel scale — and to be exactly zero on every other chamber and before every onset.
 
 The boundary 3B holds is that the chain stops at maintenance and recovery. The response layer reads latent state and writes alarms, maintenance windows and latent recovery — and cannot reach an FDC row, a defect, a die or a yield number, because none of those concepts is in scope for it. It also cannot reach a *mechanism*: the alarm, escalation and repair decision path is checked by AST to contain no mechanism, event, severity or counterfactual identifier, so "generic response rule" is a property of the code rather than a description of it.
 

@@ -32,19 +32,25 @@ and the stage the physics will later play on:
                     into work orders, response-driven maintenance that blocks
                     production, and one recovery machine for every maintenance
                     event — scheduled, background or requested alike
+* `fabsim.observation` the process observation plane: FDC summaries grounded
+                    in recipe setpoints and zonal metrology referenced to
+                    product targets, produced from realized latent state
+                    through the world's declared sensitivity matrix
 
-The observation models, the defect and yield models, the observable emitters
-and the truth artifact are later slices. Nothing in this package reads or
-writes a dataset yet.
+The defect and yield models, the observable emitters and the truth artifact
+are later slices. Nothing in this package reads or writes a dataset yet.
 
-`fabsim.latent` is the first slice that reads a scenario's `events`, and it is
-the only one that should: everything downstream will read *latent state*, so a
-fault's effect on an observation is mediated by construction rather than by
-discipline (ADR-004). The timeline is still blind to faults — at a fixed seed a
-null scenario and a faulted one over the same world schedule identically — and
-the latent plane produces no observable row, no alarm, no defect and no yield.
-The Step 3.0 alarm, die-grid and observation contracts remain declarations: no
-code yet fires an alarm, lays out a die grid or computes an observation.
+`fabsim.latent` is the only slice that reads a scenario's `events`: everything
+downstream reads *latent state*, so a fault's effect on a measurement is
+mediated by construction rather than by discipline (ADR-004), and the
+mediation is verified by subtraction rather than argued (ADR-018). The
+timeline slice remains blind to faults — at a fixed seed `simulate_scenario`
+gives a null and a faulted scenario the same schedule — while the full
+pipeline's schedule does differ once a repair takes a chamber out of service,
+which is honest observable data (ADR-017 §5).
+
+The die-grid contract of Step 3.0 remains a declaration: no code yet lays out
+a die grid, generates a defect or computes a yield.
 """
 from __future__ import annotations
 
@@ -61,7 +67,9 @@ __all__ = ["SCHEMA_VERSION", "__version__"]
 #: 0.3.0 — Step 3B: the fab response. Alarms, response-driven maintenance and
 #: generic recovery at *every* maintenance event, which moves latent
 #: trajectories and adds windows to the calendar.
-__version__ = "0.3.0"
+#: 0.4.0 — Step 3C: the process observation plane. New emitted quantities and
+#: a new per-latent `radial_weight` in the world contract.
+__version__ = "0.4.0"
 
 #: Observable schema version, recorded in `dataset_meta` and the manifest.
 #: The schema v2 DDL is a later Phase 1 slice; the constant exists now because

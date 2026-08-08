@@ -28,6 +28,8 @@ The null dataset passes the full integrity suite; leakage tests L7 (null blindne
 
 *As implemented (Step 3A), the latent half of this criterion is met and tested:* in a null realization every trajectory equals its mechanism-free counterfactual exactly; every chamber carries every latent with the declared dynamics (F10); every chamber carries a permanent benign offset on every latent whether or not a distractor was declared (F11); and each latent's realized within-chamber weekly σ sits within ±30% of the `severity_reference` the world declares, across seeds. The dataset-level half waits for the emitters.
 
+*As implemented (Step 3C), the null process data varies:* chamber means, weekly means, lot means and run-to-run values all differ without any mechanism, products scatter about their own recipe targets, and healthy chambers overlap each other far more than they differ. A null dataset of flat readings would make any variation an answer.
+
 *As implemented (Step 3B), the null is not artificially clean:* it raises alarms of **both** kinds on most of its chambers, escalates some of them into work orders, and recovers latent state at background breakdowns and requested repairs alike. A null dataset that contained no alarms and no unscheduled maintenance would make either one an answer; this criterion now requires their presence, not their absence.
 
 ### A4 — Structural integrity (generator self-tests, every build)
@@ -47,6 +49,8 @@ Severity is calibrated in σ of the **null latent distribution** and against not
 
 ### A6 — Causal plausibility (reference recovery — leakage test L11)
 Reference SQL (fixtures in `eval/`, not part of fabops) recovers each scenario's intended evidence at moderate severity: B/G chamber-grain yield split + edge-zone defect elevation + edge-CD shift, all temporally aligned with the window; C CD trend detectable before material yield movement; I before/after-maintenance defect-rate contrast. At subtle severity the same queries sit near the natural-variation floor (difficulty axis exists).
+
+*As implemented (Step 3C), A6's precondition is in place and its calibration is honest:* the observable effect of a mechanism is exactly `latent departure × declared sensitivity × channel scale`, verified by counterfactual subtraction, and it scales with the **realized** latent shift rather than the configured severity. The transfer function was calibrated against the null world only — one latent σ moves a channel's weekly aggregate by ≈0.6 of that channel's own weekly σ — and deliberately **not** amplified: a moderate fault moves one wafer by well under a run-noise σ, and recovering it takes aggregation. Whether the reference queries can then recover each scenario's story is A6's question and waits for the scenario library.
 
 ### A7 — Leakage resistance
 Full anti-leakage suite L1–L11 green on all five library datasets. Highlighted: L3 mediation residual ≤ 2 pts (the audited 8-pt direct effect is dead), L4 no perfectly separating categorical, L5 classifier confusion in band, L8 seed sensitivity.

@@ -69,6 +69,18 @@ The fab now notices conditions and reacts to them, which is the easiest place in
 
 Two further guards are static: the alarm/escalation/repair decision path is checked by AST to contain no mechanism, event, severity, counterfactual or departure identifier, and no tool or chamber literal; and a scenario's `response` block is proven inert (two scenarios differing only in it produce byte-identical responses).
 
+## 3.3 What Step 3C added: mediation, measured
+
+The observation plane is where the audited `−0.08 if bad_tool` term lived, so D1 is checked here *exactly* rather than argued:
+
+- **The mediation test is a subtraction, not an inspection.** The same timeline is measured twice — once against the realized latent trajectories, once against their mechanism-free twins on identical draws — and the difference is asserted to equal `latent departure × declared sensitivity × channel scale` for every affected measurement, to be **exactly 0.0** on every other chamber, and to be **exactly 0.0** on every run that finished before the onset. There is no residual for a direct effect to hide in, because the residual is zero to floating-point exactness.
+- **The counterfactual is a test instrument and never an output.** The engine cannot read it (checked by AST), no observable record has a field for it, and measuring the shadow realization produces different numbers — so nothing is carrying both.
+- **Overlap is asserted, not hoped for.** Healthy chambers vary more within themselves than they differ from each other; an affected chamber's per-run distribution straddles the median of its healthy peers and vice versa. The 4σ single-GROUP-BY giveaway (T5) has no successor.
+- **Products keep their specifications and predict nothing.** Each product's metrology scatters about its own recipe target, and every product both saw and missed the affected chamber — the precondition scenario G needs, and a guard against product identity becoming a fault detector.
+- **The null is not flat.** Chamber means differ, weeks differ, lots differ, runs differ — all without a mechanism anywhere.
+
+Static guards: the engine names no mechanism, event, severity, counterfactual, scenario or entity, reaches no 3D/3E concept, and opens no file.
+
 ## 4. Process rules (human-side leakage)
 
 1. New mechanisms/scenarios must ship with their L-suite expectations before merging.

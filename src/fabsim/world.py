@@ -274,7 +274,8 @@ _DIE_GRID_OPTIONAL = ("origin", "index_order", "partial_die_policy")
 _DIE_GRID_KEYS = _DIE_GRID_REQUIRED + _DIE_GRID_OPTIONAL
 
 _LATENT_COMMON = ("family", "severity_reference", "pm_recovery",
-                  "repair_efficacy", "benign_tool_sd", "benign_chamber_sd")
+                  "repair_efficacy", "radial_weight", "benign_tool_sd",
+                  "benign_chamber_sd")
 _LATENT_FAMILY_KEYS = {
     "ar1": ("phi", "sigma"),
     "accumulation": ("growth_per_day", "sigma_per_day", "floor"),
@@ -876,6 +877,15 @@ class LatentDynamics:
     #: what lets one generic recovery machine serve every maintenance event
     #: without ever asking why the event happened.
     repair_efficacy: float
+
+    #: How much of this latent's effect is *radial* across a wafer rather than
+    #: uniform, in [0, 1]. 0 shifts every zone alike; 1 leaves the centre
+    #: untouched and lands entirely at the edge. This is what makes a
+    #: uniformity fault widen `cd_nm_sigma` and move `cd_nm_edge` while
+    #: `cd_nm_center` barely moves (`CAUSAL_MECHANISM_MODEL.md` §2) — declared
+    #: per latent, so the observation model never has to know *which* latent
+    #: is the radial one.
+    radial_weight: float
 
     #: Spread of the permanent benign offsets, in units of
     #: `severity_reference`. Every tool and every chamber gets one; the
@@ -2241,6 +2251,9 @@ def _build_latents(raw: Any, latents: Sequence[str]
             repair_efficacy=_as_number(
                 _require(entry, "repair_efficacy", path),
                 _at(path, "repair_efficacy"), minimum=0.0, maximum=1.0),
+            radial_weight=_as_number(
+                _require(entry, "radial_weight", path),
+                _at(path, "radial_weight"), minimum=0.0, maximum=1.0),
             pm_recovery_mean=_as_number(
                 _require(recovery, "mean", recovery_path),
                 _at(recovery_path, "mean"), minimum=0.0, maximum=1.0),
