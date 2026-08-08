@@ -14,7 +14,7 @@ The mandatory separation:
 
 ```
                        ┌────────────────────────┐
-                       │  SCENARIO CONFIG (YAML)│   hidden input
+                       │  SCENARIO CONFIG (JSON)│   hidden input
                        │  + seed + fabsim ver.  │
                        └───────────┬────────────┘
                                    │
@@ -43,10 +43,10 @@ The diagnostic system receives **only** the left branch. The right branch is rea
 1. **Answer-blindness** (ADR-003). Fault identity exists in exactly two places: scenario configs and the truth artifact. No observable table, column, value pattern, filename, or ID encodes it.
 2. **Physics-mediated faults only** (ADR-004). A fault influences yield exclusively through the chain *disturbance → latent state → measurable process effect → defect/die-kill mechanism → yield*, with independent noise at every stage. The audited `−0.08 if bad_tool` term is the canonical prohibited pattern.
 3. **One event clock.** Every timestamp comes from a single simulated timeline; runs cannot overlap tool downtime; effects follow causes with realistic lags (`TEMPORAL_MODEL.md`).
-4. **Determinism per (config, seed, version).** Same inputs → byte-identical outputs. Different seed → different realization, same scenario semantics.
+4. **Determinism per (config, seed, version).** Same inputs → the same dataset content, proven by canonical content hash rather than by SQLite file bytes (`PHASE_1_ACCEPTANCE.md` A1, ADR-014). Different seed → different realization, same scenario semantics.
 5. **Keep the verified virtues** of the legacy generator: stdlib-only, self-contained, dual output (`.db` + portable `.sql`), coordinate-level defect geometry, converging multi-channel evidence — generalized from one hard-wired cause to one *configured* cause per scenario.
 6. **Right-sized** (ADR-012): one fab, ~20 lots × 25 wafers, ~14-step route, SQLite, seconds-level runtimes. No new runtime dependencies for generation.
-7. **The legacy demo survives** (ADR-010): `data/generate_fab_db.py` and its outputs are untouched until `scenarios/demo_etch02.yaml` reproduces a statistically equivalent ETCH-02 story and every consumer surface has migrated.
+7. **The legacy demo survives** (ADR-010): `data/generate_fab_db.py` and its outputs are untouched until `scenarios/demo_etch02.json` reproduces a statistically equivalent ETCH-02 story and every consumer surface has migrated.
 
 ## 3. Package architecture
 
@@ -55,9 +55,11 @@ The diagnostic system receives **only** the left branch. The right branch is rea
 ```
 src/fabsim/
 ├── __init__.py            # __version__ = generator version (semver; see §7)
-├── cli.py                 # fabsim-build <config.yaml> --seed N [--out DIR]
-├── scenario.py            # config load, schema validation, scenario_id derivation
+├── cli.py                 # fabsim-build <config.json> --seed N [--out DIR]
+├── scenario.py            # config load, schema validation, canonicalization,
+│                          #   scenario/dataset identity derivation  [implemented]
 ├── rng.py                 # seed → named deterministic substreams (see §6)
+│                          #                                        [implemented]
 ├── world.py               # static entities: products, flows, steps, recipes,
 │                          #   tools, chambers, operators (from world template)
 ├── timeline.py            # the event clock: lot release, wafer step progression,
@@ -115,20 +117,22 @@ data/scenarios/<dataset_id>/
 - One **master seed** per dataset (CLI argument or config default).
 - No global `random.seed`. Each subsystem gets its own `random.Random` instance keyed by a stable name: `stream(master_seed, "routing", lot_id)`, `stream(master_seed, "defects", wafer_id, step_id)`, etc., with the substream seed derived via SHA-256 of the key tuple. This gives (a) reproducibility, (b) *stability under unrelated changes* — adding a parameter to the yield model must not reshuffle routing draws.
 - Deterministic iteration everywhere: entities processed in primary-key order; no set/dict iteration order dependence; no wall-clock reads inside generation (the manifest's `created_at` is the only wall-clock value and is excluded from content hashes).
-- Byte-stability is an acceptance test (`PHASE_1_ACCEPTANCE.md` A1).
+- Content-stability is an acceptance test (`PHASE_1_ACCEPTANCE.md` A1).
+
+Implemented in `rng.py`: `stream(master_seed, *key)` returns a fresh `random.Random` seeded from SHA-256 over a versioned domain tag, the master seed, and a length-prefixed, type-tagged encoding of the key parts. The length prefix is what makes the encoding injective — without it `("a", "b")` and `("ab",)` would be the same stream. The module holds no mutable state and never calls `random.seed()`, so importing it cannot perturb anybody else's randomness, and Python's salted `hash()` is never used.
 
 ## 7. Versioning
 
 - **Generator version**: `fabsim.__version__`, semver. Any change that can alter emitted bytes for a fixed (config, seed) bumps at least the minor version. Recorded in manifest and truth.
 - **Schema version**: `2.0` for the Phase 1 observable schema; recorded in the DB's `dataset_meta` table and the manifest. Additive changes bump the minor; breaking changes bump the major.
 - **Truth schema version**: `fabsim.truth/v1`, versioned independently (`GROUND_TRUTH_CONTRACT.md` §5).
-- **Scenario config version**: `fabsim.scenario/v1` header field, validated on load.
+- **Scenario config version**: `fabsim.scenario/v1` header field (spelled `"fabsim": "scenario/v1"` in the file), validated on load; any other value is rejected.
 
 The benchmark can therefore state precisely: *result R came from scenario X (config hash), seed Z, fabsim vY, schema 2.0* — the reproducibility requirement of the gate.
 
 ## 8. Dependency policy
 
-Generation remains **stdlib-only** (sqlite3, random, math, hashlib, json, datetime, dataclasses). Config files are YAML for readability; to avoid a new runtime dependency the loader accepts the JSON-compatible subset of YAML via a ~60-line internal parser **or** configs ship as `.json` — final call at implementation review; the design treats config syntax as cosmetic. No numpy/scipy/pandas inside `fabsim`. (Numpy-quality Gaussian/Poisson draws are not required; stdlib `random` plus an inverse-transform Poisson is sufficient at this scale.)
+Generation remains **stdlib-only** (sqlite3, random, math, hashlib, json, datetime, dataclasses). **Config files are JSON** (ADR-014, settled at implementation review): a hand-written YAML subset parser would be a second, weaker JSON with its own bugs, and `json` is already in the standard library and already the format of the manifest and the truth artifact. The design always treated config syntax as cosmetic; this resolves it in favour of the option that adds no code and no dependency. No numpy/scipy/pandas inside `fabsim`. (Numpy-quality Gaussian/Poisson draws are not required; stdlib `random` plus an inverse-transform Poisson is sufficient at this scale.)
 
 ## 9. What Phase 1 explicitly does NOT build
 
@@ -142,7 +146,7 @@ Generation remains **stdlib-only** (sqlite3, random, math, hashlib, json, dateti
 | # | Risk / question | Position taken; what review should decide |
 |---|---|---|
 | R1 | **Calibration difficulty**: making faults detectable-but-not-trivial is a tuning problem. | Severity is defined in units of the natural variation of the aggregated weekly statistic (`CAUSAL_MECHANISM_MODEL.md` §8), and reference-query recoverability is an acceptance test. Accepting: first implementation may need 1–2 tuning iterations; the acceptance tests make that measurable rather than aesthetic. |
-| R2 | **Config syntax**: YAML (needs parser decision) vs JSON (uglier, zero-dependency). | Design is syntax-neutral; recommend JSON-compatible-YAML subset parser; decide at implementation review. |
+| R2 | **Config syntax**: YAML (needs parser decision) vs JSON (uglier, zero-dependency). | **Resolved: JSON** (ADR-014). Zero new code, zero dependency, same format as the manifest and truth artifact; the loader compensates for JSON's ergonomics with strict validation that names the offending field path. |
 | R3 | **Timeline model fidelity**: chamber-serial occupancy without queues/dispatching is a simplification. | Accepted deliberately (ADR-012). It is sufficient to make downtime block production and routing respond to availability — the two properties the audit found violated. |
 | R4 | **Truth completeness**: which per-wafer detail belongs in truth vs being derivable? | Truth records *realized* affected sets and exposure degrees (not just config intent) so the benchmark never re-simulates. See `GROUND_TRUTH_CONTRACT.md` §3. |
 | R5 | **Statistical equivalence of the demo**: "statistically equivalent ETCH-02 story" needs a definition. | Defined in `PHASE_1_ACCEPTANCE.md` A9 as a checklist of qualitative findings (worst tool on 3 channels, edge-ring spatial signature, effect-size windows), not exact numbers. |

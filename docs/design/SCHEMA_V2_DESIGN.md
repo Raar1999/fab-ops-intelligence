@@ -28,7 +28,7 @@ tools/chambers ─1:N─ maintenance   (PM / unscheduled, intervals)
 dataset_meta   (single-row provenance)
 ```
 
-21 tables replacing v1's 11. Every addition below carries the engineering question it exists to answer; nothing is added without one.
+22 tables (§2.1–2.22) replacing v1's 11. Every addition below carries the engineering question it exists to answer; nothing is added without one.
 
 ## 2. Table-by-table specification
 
@@ -36,7 +36,9 @@ Column lists are design-level (names/types indicative, final DDL at implementati
 
 ### 2.1 `dataset_meta` — provenance (1 row)
 `schema_version, fabsim_version, dataset_id` (opaque), `time_origin, horizon_days`.
-**Why:** the benchmark and every consumer must know exactly which generator/schema produced the file. **Observable:** yes — contains no scenario semantics (no seed, no scenario name; those live in the manifest and truth respectively). **Question:** "what am I looking at, and is my tooling compatible with it?"
+**Why:** the benchmark and every consumer must know exactly which generator/schema produced the file. **Observable:** yes — it carries provenance, not scenario semantics: no scenario name, no mechanism, no fault field, and no seed column.
+
+The seed is nonetheless *present*, inside the opaque `dataset_id` (`scn-<12 hex>-s<seed>`, `SCENARIO_SPECIFICATION.md` §5) — this table is where the two facts must be stated together rather than contradict each other. The distinction that matters is disclosure, not presence: the seed alone says nothing about a scenario (every scenario in the library can be built with seed 42), and `scenario_id` is a one-way hash of the canonicalized configuration with the scenario's name and description excluded from the digest, so neither half of the id discloses the answer (anti-leakage rule D5). The seed as a *first-class field* lives in `manifest.json`; the scenario name lives only in `truth.json`. **Question:** "what am I looking at, and is my tooling compatible with it?"
 
 ### 2.2 `products`
 As v1: `product_id, product_name, technology_node_nm, wafer_size_mm, die_size_mm2, target_yield_pct`, plus `flow_id` FK.

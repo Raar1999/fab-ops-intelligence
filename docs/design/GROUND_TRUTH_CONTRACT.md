@@ -32,7 +32,7 @@ data/scenarios/<dataset_id>/
   "dataset_id": "scn-3f9a1c7b2e4d-s042",
   "scenario_id": "scn-3f9a1c7b2e4d",
   "scenario_name": "demo-edge-uniformity",
-  "config_sha256": "…full hash of canonicalized config…",
+  "config_sha256": "…64 hex — SHA-256 of the canonicalized config (name/description excluded); scenario_id is its first 12 chars…",
   "seed": 42,
   "fabsim_version": "1.0.0",
   "schema_version": "2.0",
@@ -82,7 +82,7 @@ Field intent:
 
 ## 4. Access rules (the separation that must hold)
 
-| Actor | fab.db / dump / manifest | scenarios/*.yaml | truth/truth.json |
+| Actor | fab.db / dump / manifest | scenarios/*.json | truth/truth.json |
 |---|---|---|---|
 | `fabsim` | writes | reads | writes |
 | `fabops` (all analytical code, dashboard, notebooks) | **reads** | **never** | **never** |

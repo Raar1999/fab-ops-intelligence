@@ -16,7 +16,7 @@ A scenario is *not* a dataset. One scenario × one seed × one fabsim version = 
 
 | Artifact | Contains | Visible to |
 |---|---|---|
-| **Scenario configuration** (`scenarios/*.yaml`) | The *intent*: which mechanisms, where, when, how severe, how responded to | fabsim only (and humans) |
+| **Scenario configuration** (`scenarios/*.json`) | The *intent*: which mechanisms, where, when, how severe, how responded to | fabsim only (and humans) |
 | **Observable operational data** (`fab.db` + dump + manifest) | What a fab's MES/FDC/inspection/test systems would record: entities, runs, measurements, states, alarms, maintenance, defects, yield | everything (fabops, dashboard, humans, benchmark) |
 | **Hidden ground truth** (`truth/truth.json`) | The *realization*: which runs/wafers/chambers were actually affected, latent trajectories, expected evidence — the answer key | fabsim (writer), `eval/` (reader). Never fabops. |
 
@@ -24,44 +24,78 @@ The config is hidden because it *is* the answer. The truth artifact exists separ
 
 ## 2. Configuration format
 
-Header-versioned (`fabsim.scenario/v1`), schema-validated on load. Reference example (the Phase 1 demo scenario):
+**JSON**, header-versioned (`fabsim.scenario/v1`), schema-validated on load by `fabsim.scenario` — the only module that ever reads a configuration. JSON rather than YAML because FabSim is stdlib-only (`FABSIM_DESIGN.md` §8) and a hand-written YAML subset parser would be a second, weaker JSON; ADR-014 records the decision. The header field keeps its documented spelling, so `"fabsim": "scenario/v1"` *is* the `fabsim.scenario/v1` contract.
 
-```yaml
-fabsim: scenario/v1
-name: demo-edge-uniformity        # human slug — appears ONLY here and in truth.json
-description: >
-  Statistically equivalent successor of the legacy ETCH-02 demo: one etch
-  chamber develops edge non-uniformity mid-window, is repaired, mostly recovers.
-world: baseline_fab_v1            # world template (products, flow, tools, chambers,
-                                  # recipes, baseline variation stack, PM cadence)
-horizon_days: 84
-lots: 20
-default_seed: 42                  # overridable at build time
+Reference example (the Phase 1 demo scenario):
 
-events:
-  - mechanism: chamber_edge_uniformity      # from fabsim.mechanisms
-    target: {tool: ETCH-02, chamber: B}     # names resolved against the world
-    onset_day: 35
-    profile: {type: ramp, ramp_days: 7}     # step | ramp | intermittent
-    severity: moderate                      # subtle | moderate | obvious (see
-                                            # CAUSAL_MECHANISM_MODEL.md §8)
-    response:                               # how the simulated fab reacts
-      alarm: true                           # latent crossing emits alarms
-      repair_delay_days_mean: 4.0           # alarm → unscheduled maintenance lag
-      recovery: partial                     # none | partial | full
+```json
+{
+  "fabsim": "scenario/v1",
+  "name": "demo-edge-uniformity",
+  "description": "Statistically equivalent successor of the legacy ETCH-02 demo: one etch chamber develops edge non-uniformity mid-window, is repaired, mostly recovers.",
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
 
-distractors:
-  - mechanism: benign_offset
-    target: {tool: CVD-01}
-    magnitude: small                        # permanent, harmless, must not be blamed
+  "events": [
+    {
+      "mechanism": "chamber_edge_uniformity",
+      "target": {"tool": "ETCH-02", "chamber": "B"},
+      "onset_day": 35,
+      "profile": {"type": "ramp", "ramp_days": 7},
+      "severity": "moderate",
+      "response": {"alarm": true, "repair_delay_days_mean": 4.0,
+                   "recovery": "partial"}
+    }
+  ],
+
+  "distractors": [
+    {"mechanism": "benign_offset", "target": {"tool": "CVD-01"},
+     "magnitude": "small"}
+  ]
+}
 ```
+
+`name` is the human slug — it appears only here and in `truth.json`. `description` is prose. `world` names the world template (products, flow, tools, chambers, recipes, baseline variation stack, PM cadence). `default_seed` is overridable at build time.
+
+### 2.1 The contract, field by field
+
+| Field | Required | Type / vocabulary | Notes |
+|---|---|---|---|
+| `fabsim` | yes | exactly `"scenario/v1"` | any other value is rejected, including a future version |
+| `name` | yes | non-empty string | documentation; excluded from identity |
+| `description` | no (`""`) | string | documentation; excluded from identity |
+| `world` | yes | `[a-z][a-z0-9_]*` | resolved against the world template registry at build time |
+| `horizon_days` | yes | integer ≥ 1 | |
+| `lots` | yes | integer ≥ 1 | |
+| `default_seed` | yes | integer in [0, 2⁶⁴−1] | |
+| `events` | no (`[]`) | array of events | order is significant |
+| `distractors` | no (`[]`) | array of distractors | order is significant |
+
+Event: `mechanism` (required, `[a-z][a-z0-9_]*`), `target` (required), `onset_day` (required, number in [0, `horizon_days`)), `severity` (required, `subtle` \| `moderate` \| `obvious`), `profile` (default `{"type": "step"}`), `response` (default `{"alarm": false, "repair_delay_days_mean": 0.0, "recovery": "none"}`).
+
+Target: `tool` (required, entity name), `chamber` (optional). An absent `chamber` means the target is the whole tool and is *not* defaulted — tool-wide and chamber-scoped are different declarations.
+
+Profile: `type` ∈ `step` \| `ramp` \| `intermittent`; `ramp_days` (number > 0) is required for `ramp` and rejected for the others. `intermittent` takes no parameters until the mechanism that interprets it lands.
+
+Response: `alarm` (boolean), `repair_delay_days_mean` (number ≥ 0), `recovery` ∈ `none` \| `partial` \| `full`.
+
+Distractor: `mechanism` (required), `target` (required), `magnitude` (required, `small` \| `moderate` \| `large`).
 
 Notes:
 
-- **World templates** live beside scenarios (`scenarios/worlds/baseline_fab_v1.yaml`) and hold everything scenario-independent: entity rosters, flow/recipes, variation-stack magnitudes, defect/yield model constants, PM cadence, breakdown hazards, routing policy. Scenarios stay short diffs against a shared world — which also prevents per-scenario constant tuning (anti-leakage rule D7).
-- `events: []` is legal and is exactly the null scenario.
+- **World templates** live beside scenarios (`scenarios/worlds/baseline_fab_v1.json`) and hold everything scenario-independent: entity rosters, flow/recipes, variation-stack magnitudes, defect/yield model constants, PM cadence, breakdown hazards, routing policy. Scenarios stay short diffs against a shared world — which also prevents per-scenario constant tuning (anti-leakage rule D7).
+- `"events": []` is legal and is exactly the null scenario; so is omitting the key, which canonicalizes to the same thing.
 - Multiple events are legal (scenario J later); Phase 1 configs use at most one fault event plus distractors.
 - The `target` uses ordinary entity names. Entity names are world vocabulary shared by all scenarios, so a name says nothing about fault status.
+- Every categorical value comes from a closed vocabulary defined above; a configuration shifts frequencies, it never mints vocabulary (anti-leakage rule D2).
+
+### 2.2 Loader strictness
+
+The loader rejects, rather than repairs: an unsupported header, a missing required field, a wrong type (including `84.0` where an integer count is required, and `true` where a number is), a value outside a closed vocabulary, an unknown or misspelled field at any level, an event whose onset falls outside the horizon, a `ramp` without `ramp_days`, a duplicate JSON key (valid JSON, two stated intents), and the non-finite literals `NaN`/`Infinity`. Every rejection names the offending path (`events[0].profile.ramp_days`).
+
+What the loader deliberately does **not** check: whether `world` and `mechanism` actually exist. Those registries belong to the world and mechanism slices, and resolution happens at build time.
 
 ## 3. Scenario library evaluation (A–J)
 
@@ -138,7 +172,12 @@ Common world: `baseline_fab_v1` — 6 products, 1 flow (14 steps), 15 tools (3 e
 
 ## 5. Identity, naming, reproducibility
 
-- **`scenario_id`** = `scn-` + first 12 hex chars of SHA-256 over the canonicalized config (comments and `name`/`description` fields excluded from the hash — they are documentation, not semantics). Renaming a file or editing prose does not change identity; changing any semantic field does.
-- **`dataset_id`** = `<scenario_id>-s<seed>`, e.g., `scn-3f9a1c7b2e4d-s042`.
-- **Filenames** of configs may be descriptive (`demo_edge_uniformity.yaml`) because fabops never reads `scenarios/`. Emitted dataset directories and manifests use only opaque IDs (anti-leakage rule D5); the slug ↔ id mapping lives in the truth artifact and a maintainers' index in `scenarios/README.md`.
-- **Reproduction statement:** (config file ⇒ scenario_id) + seed + fabsim version + schema version fully determine the dataset; all four are in the manifest; `PHASE_1_ACCEPTANCE.md` A1 pins byte-stability.
+**Canonicalization comes first.** A configuration is normalized before it is hashed: optional fields filled with their defaults, counts as integers and days as floats (`35` and `35.0` are the same day), strings stripped, keys sorted, compact separators, ASCII-escaped, list order preserved because event order is semantic. Two files that mean the same thing therefore produce the same canonical text and the same identity, whatever their formatting, key order, indentation, or byte-order mark.
+
+- **`config_sha256`** = SHA-256 over the canonical configuration with `name` and `description` removed — they are documentation, not semantics. Renaming a file or editing prose does not change identity; changing any other field, including `default_seed` or the order of `events`, does.
+- **`scenario_id`** = `scn-` + first 12 hex chars of `config_sha256`, e.g. `scn-3f9a1c7b2e4d`.
+- **`dataset_id`** = `<scenario_id>-s<seed>`, e.g. `scn-3f9a1c7b2e4d-s042`.
+- **`build_fingerprint`** = SHA-256 over the four reproducibility inputs (`config_sha256`, seed, fabsim version, schema version). `dataset_id` names a (scenario, seed) pair; the fingerprint additionally pins *which generator and schema* produced it, so two datasets that share a `dataset_id` but were built by different FabSim versions are distinguishable. It is the input side of acceptance test A1.
+- **Nothing environmental** enters any of these: no wall clock, no file path, no machine or user name, no locale, no environment variable, no Python hash salt.
+- **Filenames** of configs may be descriptive (`demo_edge_uniformity.json`) because fabops never reads `scenarios/`, and because the path has no influence on identity. Emitted dataset directories and manifests use only opaque IDs (anti-leakage rule D5); the slug ↔ id mapping lives in the truth artifact and a maintainers' index in `scenarios/README.md`.
+- **Reproduction statement:** (config file ⇒ `config_sha256`) + seed + fabsim version + schema version fully determine the dataset; all four are in the manifest, and `build_fingerprint` is their single comparable form. `PHASE_1_ACCEPTANCE.md` A1 defines what "the same dataset" is checked against.

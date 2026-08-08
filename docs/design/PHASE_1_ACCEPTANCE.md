@@ -7,7 +7,18 @@
 ## A. Acceptance criteria
 
 ### A1 — Reproducibility
-Same config + same seed + same fabsim version ⇒ **byte-identical** `fab.db` and `fab_database.sql` (SHA-256 compare across two clean runs, including on CI's OS). `manifest.json` identical except `created_at` (excluded from hashes).
+Same config + same seed + same fabsim version + same schema version ⇒ **the same dataset content**, everywhere. The oracle is a canonical content hash, not the raw bytes of the SQLite file: `fab.db` bytes depend on the SQLite library version, page size and free-list history, so a byte compare across operating systems tests the storage engine as much as it tests FabSim, and would fail for reasons that have nothing to do with determinism.
+
+Four checks, in order of authority:
+
+1. **Input fingerprint.** The four inputs canonicalize to one `build_fingerprint` (`fabsim.scenario.derive_build_fingerprint`). Two runs claiming to be the same build must agree on it, and it must not move when anything environmental changes — path, machine, user, locale, clock, hash seed, or the order in which streams were drawn.
+2. **Content hash — the portable guarantee.** Two clean runs must produce the identical `content_sha256`: a canonical row-level digest over every table of `fab.db` in a normalized form — tables in name order, rows in primary-key order, values in a fixed type-tagged text encoding (integers exact, floats shortest round-trip repr, NULL distinct from the empty string, text in NFC). This is what CI compares across operating systems and SQLite versions, and it is what the manifest records.
+3. **Normalized text artifacts.** `fab_database.sql` is emitted deterministically (fixed statement order, fixed formatting, no environment-dependent preamble) and compared byte-for-byte; `truth/truth.json` is canonical JSON (sorted keys, fixed separators) and compared byte-for-byte. Text dumps are portable in a way the binary file is not.
+4. **Additional check, controlled environment only.** On the CI reference image (pinned OS, Python and SQLite), `fab.db` is *also* compared by SHA-256. A mismatch here while (2) and (3) are green is a storage-layer difference, not a reproducibility failure: it fails the reference-image job and is investigated there, and it never gates the cross-platform result.
+
+`manifest.json` is identical across runs except `created_at` — the only wall-clock value in the pipeline, excluded from every hash.
+
+This does not weaken the requirement. Byte identity was only ever a proxy for "the same data"; the content hash tests that property directly, on every value in every row, and unlike a byte compare it names the table and row that diverged when it fails. What is dropped is the claim that a *binary storage format* is identical across environments FabSim does not control — a claim the design never needed and could not have kept.
 
 ### A2 — Diversity
 Three seeds of `chamber_edge_uniformity`: affected-wafer sets differ pairwise (Jaccard < 0.9); realized cohort yield deltas differ; all structural invariants (A4) hold in every realization; scenario semantics (mechanism, target, onset intent) identical in truth.
