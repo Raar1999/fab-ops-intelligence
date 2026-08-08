@@ -130,14 +130,12 @@ def _wafer_panel(ax, wafer_ids, title):
 def chart_wafer_maps() -> Path:
     """Showpiece: defect maps for suspect wafers vs the rest, side by side."""
     suspect_ids = run_query(
-        "SELECT DISTINCT rh.wafer_id FROM run_history rh "
-        "JOIN tools t ON t.tool_id=rh.tool_id "
-        "WHERE rh.step_id=4 AND t.tool_name=?", params=(SUSPECT,)
+        "SELECT DISTINCT wafer_id FROM v_gate_etch_runs WHERE tool_name=?",
+        params=(SUSPECT,),
     )["wafer_id"].tolist()
     other_ids = run_query(
-        "SELECT DISTINCT rh.wafer_id FROM run_history rh "
-        "JOIN tools t ON t.tool_id=rh.tool_id "
-        "WHERE rh.step_id=4 AND t.tool_type='ETCH' AND t.tool_name<>?", params=(SUSPECT,)
+        "SELECT DISTINCT wafer_id FROM v_gate_etch_runs "
+        "WHERE tool_type='ETCH' AND tool_name<>?", params=(SUSPECT,)
     )["wafer_id"].tolist()
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 5.6))

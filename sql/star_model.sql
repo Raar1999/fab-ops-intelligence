@@ -33,11 +33,15 @@ JOIN wafers   w  ON w.wafer_id = y.wafer_id
 JOIN lots     l  ON l.lot_id   = y.lot_id
 JOIN products p  ON p.product_id = l.product_id
 LEFT JOIN (
-    -- each wafer's gate-etch (step 4) tool; LEFT so wafers without a run still appear
+    -- each wafer's gate-etch tool; LEFT so wafers without a run still appear.
+    -- The step is resolved by NAME (same anchor as v_gate_etch_runs in
+    -- views.sql — resolved inline here because the star model is applied
+    -- before the view layer exists).
     SELECT rh.wafer_id, t.tool_name
     FROM run_history rh
     JOIN tools t ON t.tool_id = rh.tool_id
-    WHERE rh.step_id = 4
+    WHERE rh.step_id = (SELECT step_id FROM process_steps
+                        WHERE step_name = 'ETCH-GATE')
     GROUP BY rh.wafer_id, t.tool_name
 ) et ON et.wafer_id = y.wafer_id;
 

@@ -19,6 +19,7 @@ from fabops.config import DEMO_SUSPECT_TOOL as SUSPECT, EDGE_ZONE_MIN_RADIUS_MM
 from fabops.db import run_query, run_view
 
 EXPECTED_VIEWS = {
+    "v_gate_etch_runs",
     "v_yield_by_product", "v_yield_by_node", "v_etch_tool_yield", "v_defect_zone",
     "v_edge_ring_by_tool", "v_tool_downtime", "v_tool_rca", "v_weekly_yield",
     "v_scrap_by_lot", "v_shift_yield", "v_defect_pareto", "v_loss_decomposition",
@@ -119,11 +120,10 @@ def test_suspect_wafers_have_larger_mean_defect_radius():
     df = run_query("""
         WITH tagged AS (
           SELECT DISTINCT y.wafer_id,
-                 MAX(CASE WHEN t.tool_name=? THEN 1 ELSE 0 END)
+                 MAX(CASE WHEN g.tool_name=? THEN 1 ELSE 0 END)
                      OVER (PARTITION BY y.wafer_id) AS on_suspect
           FROM yield_data y
-          JOIN run_history rh ON rh.wafer_id=y.wafer_id AND rh.step_id=4
-          JOIN tools t ON t.tool_id=rh.tool_id)
+          JOIN v_gate_etch_runs g ON g.wafer_id=y.wafer_id)
         SELECT tg.on_suspect, AVG(dz.radius_mm) avg_r
         FROM tagged tg JOIN v_defect_zone dz ON dz.wafer_id=tg.wafer_id
         GROUP BY tg.on_suspect
@@ -152,10 +152,9 @@ def test_estimated_die_loss_is_positive():
     df = run_query("""
         WITH tagged AS (
           SELECT y.wafer_id, y.yield_pct, y.total_die,
-                 MAX(CASE WHEN t.tool_name=? THEN 1 ELSE 0 END) AS on_suspect
+                 MAX(CASE WHEN g.tool_name=? THEN 1 ELSE 0 END) AS on_suspect
           FROM yield_data y
-          JOIN run_history rh ON rh.wafer_id=y.wafer_id AND rh.step_id=4
-          JOIN tools t ON t.tool_id=rh.tool_id
+          JOIN v_gate_etch_runs g ON g.wafer_id=y.wafer_id
           GROUP BY y.wafer_id, y.yield_pct, y.total_die),
         benchmark AS (SELECT AVG(yield_pct) good_yield FROM tagged WHERE on_suspect=0)
         SELECT SUM(CASE WHEN on_suspect=1

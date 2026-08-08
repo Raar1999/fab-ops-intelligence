@@ -12,6 +12,33 @@
 -- ============================================================================
 
 ----------------------------------------------------------------------
+-- 0. Gate-etch runs  (the single definition of "gate etch")
+--    Every gate-etch analysis joins this view. The step is identified
+--    by NAME against process_steps, not by a magic id — the audit found
+--    `step_id = 4` hard-coded in 9 places (audit debt #5). The same
+--    anchor is documented for the Python layer in fabops/config.py;
+--    sql/star_model.sql resolves the name itself because it is applied
+--    before this view exists.
+----------------------------------------------------------------------
+DROP VIEW IF EXISTS v_gate_etch_runs;
+CREATE VIEW v_gate_etch_runs AS
+SELECT rh.run_id,
+       rh.wafer_id,
+       rh.tool_id,
+       rh.operator_id,
+       rh.chamber_id,
+       rh.start_time,
+       rh.end_time,
+       rh.measured_value,
+       rh.pass_fail,
+       t.tool_name,
+       t.tool_type
+FROM run_history rh
+JOIN tools t ON t.tool_id = rh.tool_id
+WHERE rh.step_id = (SELECT step_id FROM process_steps
+                    WHERE step_name = 'ETCH-GATE');
+
+----------------------------------------------------------------------
 -- 1. Yield vs target, by product  (the "symptom" view)
 ----------------------------------------------------------------------
 DROP VIEW IF EXISTS v_yield_by_product;
@@ -44,14 +71,13 @@ GROUP BY p.technology_node_nm;
 ----------------------------------------------------------------------
 DROP VIEW IF EXISTS v_etch_tool_yield;
 CREATE VIEW v_etch_tool_yield AS
-SELECT t.tool_name,
+SELECT g.tool_name,
        COUNT(DISTINCT y.wafer_id)  AS wafers,
        ROUND(AVG(y.yield_pct), 2)  AS avg_yield
-FROM run_history rh
-JOIN tools t      ON t.tool_id = rh.tool_id
-JOIN yield_data y ON y.wafer_id = rh.wafer_id
-WHERE rh.step_id = 4 AND t.tool_type = 'ETCH'
-GROUP BY t.tool_name;
+FROM v_gate_etch_runs g
+JOIN yield_data y ON y.wafer_id = g.wafer_id
+WHERE g.tool_type = 'ETCH'
+GROUP BY g.tool_name;
 
 ----------------------------------------------------------------------
 -- 4. Defects with radial zone  (the spatial-signature view)
@@ -79,15 +105,14 @@ FROM defects d;
 ----------------------------------------------------------------------
 DROP VIEW IF EXISTS v_edge_ring_by_tool;
 CREATE VIEW v_edge_ring_by_tool AS
-SELECT t.tool_name,
+SELECT g.tool_name,
        COUNT(*)                                                                AS total_defects,
        SUM(CASE WHEN d.defect_type = 'EDGE_RING' THEN 1 ELSE 0 END)            AS edge_ring_defects,
        ROUND(100.0 * SUM(CASE WHEN d.defect_type = 'EDGE_RING' THEN 1 ELSE 0 END) / COUNT(*), 1) AS edge_ring_pct
 FROM defects d
-JOIN run_history rh ON rh.wafer_id = d.wafer_id AND rh.step_id = 4
-JOIN tools t        ON t.tool_id = rh.tool_id
-WHERE t.tool_type = 'ETCH'
-GROUP BY t.tool_name;
+JOIN v_gate_etch_runs g ON g.wafer_id = d.wafer_id
+WHERE g.tool_type = 'ETCH'
+GROUP BY g.tool_name;
 
 ----------------------------------------------------------------------
 -- 6. Maintenance downtime per tool  (confirmation #2)
@@ -111,17 +136,15 @@ GROUP BY t.tool_id, t.tool_name, t.tool_type;
 DROP VIEW IF EXISTS v_tool_rca;
 CREATE VIEW v_tool_rca AS
 WITH exposure AS (
-    SELECT rh.tool_id, COUNT(DISTINCT rh.wafer_id) AS wafers_processed
-    FROM run_history rh
-    WHERE rh.step_id = 4
-    GROUP BY rh.tool_id
+    SELECT g.tool_id, COUNT(DISTINCT g.wafer_id) AS wafers_processed
+    FROM v_gate_etch_runs g
+    GROUP BY g.tool_id
 ),
 yield_by_tool AS (
-    SELECT rh.tool_id, ROUND(AVG(y.yield_pct), 2) AS avg_yield
-    FROM run_history rh
-    JOIN yield_data y ON y.wafer_id = rh.wafer_id
-    WHERE rh.step_id = 4
-    GROUP BY rh.tool_id
+    SELECT g.tool_id, ROUND(AVG(y.yield_pct), 2) AS avg_yield
+    FROM v_gate_etch_runs g
+    JOIN yield_data y ON y.wafer_id = g.wafer_id
+    GROUP BY g.tool_id
 )
 SELECT t.tool_name,
        yt.avg_yield,
@@ -170,10 +193,9 @@ CREATE VIEW v_shift_yield AS
 SELECT o.shift,
        COUNT(DISTINCT y.wafer_id)  AS wafers,
        ROUND(AVG(y.yield_pct), 2)  AS avg_yield
-FROM run_history rh
-JOIN operators o  ON o.operator_id = rh.operator_id
-JOIN yield_data y ON y.wafer_id = rh.wafer_id
-WHERE rh.step_id = 4
+FROM v_gate_etch_runs g
+JOIN operators o  ON o.operator_id = g.operator_id
+JOIN yield_data y ON y.wafer_id = g.wafer_id
 GROUP BY o.shift;
 
 ----------------------------------------------------------------------

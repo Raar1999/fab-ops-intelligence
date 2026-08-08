@@ -60,11 +60,10 @@ def step4_spatial():
     df = run_query("""
         WITH tagged AS (
           SELECT DISTINCT y.wafer_id,
-                 MAX(CASE WHEN t.tool_name=? THEN 1 ELSE 0 END)
+                 MAX(CASE WHEN g.tool_name=? THEN 1 ELSE 0 END)
                      OVER (PARTITION BY y.wafer_id) AS on_suspect
           FROM yield_data y
-          JOIN run_history rh ON rh.wafer_id=y.wafer_id AND rh.step_id=4
-          JOIN tools t ON t.tool_id=rh.tool_id)
+          JOIN v_gate_etch_runs g ON g.wafer_id=y.wafer_id)
         SELECT CASE tg.on_suspect WHEN 1 THEN ? ELSE 'other etchers' END AS tool_group,
                COUNT(*) AS defects,
                ROUND(AVG(dz.radius_mm),1) AS avg_radius_mm,
@@ -101,10 +100,9 @@ def step7_size_impact():
     df = run_query("""
         WITH tagged AS (
           SELECT y.wafer_id, y.yield_pct, y.total_die,
-                 MAX(CASE WHEN t.tool_name=? THEN 1 ELSE 0 END) AS on_suspect
+                 MAX(CASE WHEN g.tool_name=? THEN 1 ELSE 0 END) AS on_suspect
           FROM yield_data y
-          JOIN run_history rh ON rh.wafer_id=y.wafer_id AND rh.step_id=4
-          JOIN tools t ON t.tool_id=rh.tool_id
+          JOIN v_gate_etch_runs g ON g.wafer_id=y.wafer_id
           GROUP BY y.wafer_id, y.yield_pct, y.total_die),
         benchmark AS (SELECT AVG(yield_pct) AS good_yield FROM tagged WHERE on_suspect=0)
         SELECT
@@ -129,13 +127,13 @@ def step8_exposure():
     df = run_query("""
         WITH per_lot AS (
           SELECT l.lot_number,
-                 COUNT(DISTINCT rh.wafer_id) AS gate_etch_wafers,
-                 COUNT(DISTINCT CASE WHEN t.tool_name=? THEN rh.wafer_id END) AS on_suspect
-          FROM run_history rh
-          JOIN tools t ON t.tool_id=rh.tool_id AND t.tool_type='ETCH'
-          JOIN wafers w ON w.wafer_id=rh.wafer_id
+                 COUNT(DISTINCT g.wafer_id) AS gate_etch_wafers,
+                 COUNT(DISTINCT CASE WHEN g.tool_name=? THEN g.wafer_id END) AS on_suspect
+          FROM v_gate_etch_runs g
+          JOIN wafers w ON w.wafer_id=g.wafer_id
           JOIN lots l ON l.lot_id=w.lot_id
-          WHERE rh.step_id=4 GROUP BY l.lot_number)
+          WHERE g.tool_type='ETCH'
+          GROUP BY l.lot_number)
         SELECT lot_number, on_suspect, gate_etch_wafers,
                ROUND(100.0*on_suspect/gate_etch_wafers,1) AS pct_on_suspect
         FROM per_lot ORDER BY pct_on_suspect DESC LIMIT 8

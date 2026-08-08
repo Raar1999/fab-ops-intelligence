@@ -143,13 +143,13 @@ with tab_rca:
     exposure = q("""
         WITH per_lot AS (
           SELECT l.lot_number,
-                 COUNT(DISTINCT rh.wafer_id) AS gate_etch_wafers,
-                 COUNT(DISTINCT CASE WHEN t.tool_name=? THEN rh.wafer_id END) AS on_suspect
-          FROM run_history rh
-          JOIN tools t ON t.tool_id=rh.tool_id AND t.tool_type='ETCH'
-          JOIN wafers w ON w.wafer_id=rh.wafer_id
+                 COUNT(DISTINCT g.wafer_id) AS gate_etch_wafers,
+                 COUNT(DISTINCT CASE WHEN g.tool_name=? THEN g.wafer_id END) AS on_suspect
+          FROM v_gate_etch_runs g
+          JOIN wafers w ON w.wafer_id=g.wafer_id
           JOIN lots l ON l.lot_id=w.lot_id
-          WHERE rh.step_id=4 GROUP BY l.lot_number)
+          WHERE g.tool_type='ETCH'
+          GROUP BY l.lot_number)
         SELECT lot_number, on_suspect, gate_etch_wafers,
                ROUND(100.0*on_suspect/gate_etch_wafers,1) AS pct_on_suspect
         FROM per_lot ORDER BY pct_on_suspect DESC
@@ -166,9 +166,8 @@ with tab_maps:
     pts = q("""
         SELECT d.x_coord_mm, d.y_coord_mm, d.defect_type
         FROM defects d
-        JOIN run_history rh ON rh.wafer_id=d.wafer_id AND rh.step_id=4
-        JOIN tools t ON t.tool_id=rh.tool_id
-        WHERE t.tool_name=?
+        JOIN v_gate_etch_runs g ON g.wafer_id=d.wafer_id
+        WHERE g.tool_name=?
     """, params=(choice,))
     if len(pts) > 2500:
         pts = pts.sample(2500, random_state=42)
