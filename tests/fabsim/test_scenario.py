@@ -24,6 +24,7 @@ from fabsim.scenario import (
     MAGNITUDES,
     PROFILE_TYPES,
     RECOVERY_MODES,
+    ROUTING_CONDITION_KINDS,
     SEVERITIES,
     ScenarioConfigError,
     derive_dataset_id,
@@ -31,6 +32,13 @@ from fabsim.scenario import (
     load_scenario,
     load_scenario_text,
 )
+
+#: A stand-in for the digest of a resolved world. `fabsim.scenario` never opens
+#: the world registry — it is handed the digest — so these tests hand it one
+#: rather than importing `fabsim.world` and coupling two contracts that the
+#: design keeps apart. `test_world.py` checks the real digest end to end.
+WORLD_DIGEST = "5c" * 32
+OTHER_WORLD_DIGEST = "7a" * 32
 
 # The Phase 1 demo scenario of SCENARIO_SPECIFICATION.md §2, in JSON.
 VALID: dict[str, Any] = {
@@ -83,6 +91,25 @@ def config(**overrides: Any) -> dict[str, Any]:
 
 def event(**overrides: Any) -> dict[str, Any]:
     raw = json.loads(json.dumps(VALID["events"][0]))
+    raw.update(overrides)
+    return raw
+
+
+#: Scenario G's confounder: one product preferentially — not exclusively —
+#: routed to one tool during a window (`SCENARIO_SPECIFICATION.md` §4 G).
+CONDITION: dict[str, Any] = {
+    "kind": "product_dedication",
+    "product": "Mobile-28",
+    "tool": "ETCH-01",
+    "operation_type": "ETCH",
+    "start_day": 28.0,
+    "end_day": 62.0,
+    "share": 0.85,
+}
+
+
+def condition(**overrides: Any) -> dict[str, Any]:
+    raw = json.loads(json.dumps(CONDITION))
     raw.update(overrides)
     return raw
 
@@ -321,6 +348,124 @@ def test_every_profile_type_is_accepted(profile_type):
                         ).events[0]["profile"]["type"] == profile_type
 
 
+# ---------------------------------------------------------- routing conditions
+#
+# ADR-015. The scenario contract carries the *experimental* routing condition;
+# the world keeps the standing policy. These tests pin the shape — resolution
+# against a world's rosters belongs to `test_routing.py`, and what the share
+# actually does to traffic belongs to `test_timeline.py`.
+
+
+def test_routing_conditions_default_to_an_empty_list():
+    """The field is optional, and omitting it is the same as declaring none."""
+    assert from_mapping(MINIMAL).routing_conditions == []
+    assert from_mapping(config()).routing_conditions == []
+
+
+def test_a_routing_condition_is_accepted_and_canonicalized():
+    cfg = from_mapping(config(routing_conditions=[condition(start_day=28,
+                                                            end_day=62)]))
+    assert cfg.routing_conditions == [{
+        "kind": "product_dedication",
+        "product": "Mobile-28",
+        "tool": "ETCH-01",
+        "operation_type": "ETCH",
+        "start_day": 28.0,
+        "end_day": 62.0,
+        "share": 0.85,
+    }]
+
+
+def test_the_contract_stays_at_v1():
+    """No scenario/v2: the field is additive and no config exists to migrate."""
+    assert CONTRACT == "fabsim.scenario/v1"
+    assert from_mapping(config(routing_conditions=[condition()]))
+
+
+def test_routing_condition_kinds_are_a_closed_vocabulary():
+    assert ROUTING_CONDITION_KINDS == ("product_dedication",)
+    with pytest.raises(ScenarioConfigError) as excinfo:
+        from_mapping(config(routing_conditions=[condition(kind="tool_swap")]))
+    assert excinfo.value.path == "routing_conditions[0].kind"
+
+
+def test_a_routing_condition_may_not_target_a_chamber():
+    """The rule that makes scenario G a confounder rather than a pointer."""
+    with pytest.raises(ScenarioConfigError) as excinfo:
+        from_mapping(config(routing_conditions=[condition(chamber="B")]))
+    assert excinfo.value.path == "routing_conditions[0].chamber"
+    assert "tool-level" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"share": 1.0}, "routing_conditions[0].share"),
+    ({"share": 1.2}, "routing_conditions[0].share"),
+    ({"share": 0.0}, "routing_conditions[0].share"),
+    ({"share": -0.1}, "routing_conditions[0].share"),
+    ({"share": "0.85"}, "routing_conditions[0].share"),
+    ({"share": True}, "routing_conditions[0].share"),
+    ({"start_day": 62.0, "end_day": 28.0}, "routing_conditions[0].end_day"),
+    ({"start_day": 30.0, "end_day": 30.0}, "routing_conditions[0].end_day"),
+    ({"start_day": -1.0}, "routing_conditions[0].start_day"),
+    ({"start_day": 84.0}, "routing_conditions[0].start_day"),  # horizon is 84
+    ({"start_day": "28"}, "routing_conditions[0].start_day"),
+    ({"product": 7}, "routing_conditions[0].product"),
+    ({"tool": ""}, "routing_conditions[0].tool"),
+    ({"operation_type": "etch"}, "routing_conditions[0].operation_type"),
+])
+def test_invalid_routing_conditions_are_rejected(overrides, path):
+    with pytest.raises(ScenarioConfigError) as excinfo:
+        from_mapping(config(routing_conditions=[condition(**overrides)]))
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("missing", ["kind", "product", "tool",
+                                     "operation_type", "start_day", "end_day",
+                                     "share"])
+def test_missing_routing_condition_fields_are_rejected(missing):
+    raw = condition()
+    del raw[missing]
+    with pytest.raises(ScenarioConfigError) as excinfo:
+        from_mapping(config(routing_conditions=[raw]))
+    assert excinfo.value.path == f"routing_conditions[0].{missing}"
+
+
+def test_unknown_routing_condition_fields_are_rejected():
+    with pytest.raises(ScenarioConfigError) as excinfo:
+        from_mapping(config(routing_conditions=[condition(priority="high")]))
+    assert excinfo.value.path == "routing_conditions[0]"
+
+
+def test_routing_conditions_must_be_an_array():
+    with pytest.raises(ScenarioConfigError) as excinfo:
+        from_mapping(config(routing_conditions=CONDITION))
+    assert excinfo.value.path == "routing_conditions"
+
+
+def test_routing_conditions_are_semantic_and_ordered():
+    """They change where wafers go, so they change the scenario's identity."""
+    plain = from_mapping(config())
+    dedicated = from_mapping(config(routing_conditions=[condition()]))
+    assert dedicated.config_sha256 != plain.config_sha256
+
+    other = condition(product="Logic-14", start_day=10.0, end_day=20.0)
+    assert (from_mapping(config(routing_conditions=[condition(), other])
+                         ).config_sha256
+            != from_mapping(config(routing_conditions=[other, condition()])
+                            ).config_sha256)
+
+
+@pytest.mark.parametrize("equivalent", [
+    pytest.param(lambda: condition(start_day=28, end_day=62), id="int-days"),
+    pytest.param(lambda: condition(product="  Mobile-28  "), id="padded"),
+])
+def test_equivalent_routing_conditions_canonicalize_identically(equivalent):
+    assert (from_mapping(config(routing_conditions=[equivalent()])
+                         ).config_sha256
+            == from_mapping(config(routing_conditions=[condition()])
+                            ).config_sha256)
+
+
 # ------------------------------------------------------------ canonical form
 
 
@@ -359,9 +504,11 @@ def test_equivalent_representations_canonicalize_identically(equivalent):
 
 def test_omitted_optional_lists_equal_empty_ones():
     explicit = from_mapping(config(events=[], distractors=[],
+                                   routing_conditions=[],
                                    name="null", description=""))
     implicit = from_mapping({k: v for k, v in explicit.canonical.items()
                              if k not in ("events", "distractors",
+                                          "routing_conditions",
                                           "description")})
     assert implicit.config_sha256 == explicit.config_sha256
 
@@ -395,6 +542,7 @@ def test_documentation_fields_are_excluded_from_identity():
     {"distractors": []},
     {"distractors": [{"mechanism": "benign_offset",
                       "target": {"tool": "CVD-01"}, "magnitude": "large"}]},
+    {"routing_conditions": [CONDITION]},
 ])
 def test_meaningful_differences_change_the_hash(overrides):
     assert (from_mapping(config(**overrides)).config_sha256
@@ -413,46 +561,80 @@ def test_event_order_is_semantic():
 
 
 def test_dataset_identity_is_deterministic():
-    identities = {from_mapping(VALID).dataset_identity(42)
-                  for _ in range(5)}
+    identities = {from_mapping(VALID).dataset_identity(
+        42, world_sha256=WORLD_DIGEST) for _ in range(5)}
     assert len(identities) == 1
     identity = identities.pop()
     assert identity.scenario_id == from_mapping(VALID).scenario_id
     assert identity.seed == 42
+    assert identity.world_sha256 == WORLD_DIGEST
     assert identity.fabsim_version == FABSIM_VERSION
     assert identity.schema_version == SCHEMA_VERSION
 
 
 def test_dataset_identity_shape():
-    identity = from_mapping(VALID).dataset_identity(42)
+    identity = from_mapping(VALID).dataset_identity(
+        42, world_sha256=WORLD_DIGEST)
     assert re.fullmatch(r"scn-[0-9a-f]{12}", identity.scenario_id)
     assert identity.dataset_id == f"{identity.scenario_id}-s042"
     assert re.fullmatch(r"scn-[0-9a-f]{12}-s\d{3,}", identity.dataset_id)
     assert re.fullmatch(r"[0-9a-f]{64}", identity.config_sha256)
+    assert re.fullmatch(r"[0-9a-f]{64}", identity.world_sha256)
     assert re.fullmatch(r"[0-9a-f]{64}", identity.build_fingerprint)
 
 
 def test_seed_defaults_to_the_configurations_default_seed():
     cfg = from_mapping(VALID)
-    assert cfg.dataset_identity() == cfg.dataset_identity(cfg.default_seed)
+    assert (cfg.dataset_identity(world_sha256=WORLD_DIGEST)
+            == cfg.dataset_identity(cfg.default_seed,
+                                    world_sha256=WORLD_DIGEST))
 
 
 @pytest.mark.parametrize("seed", [0, 1, 41, 43, 1000])
 def test_different_seeds_give_different_dataset_identities(seed):
     cfg = from_mapping(VALID)
-    baseline = cfg.dataset_identity(42)
-    other = cfg.dataset_identity(seed)
+    baseline = cfg.dataset_identity(42, world_sha256=WORLD_DIGEST)
+    other = cfg.dataset_identity(seed, world_sha256=WORLD_DIGEST)
     assert other.dataset_id != baseline.dataset_id
     assert other.build_fingerprint != baseline.build_fingerprint
     assert other.scenario_id == baseline.scenario_id  # same scenario
 
 
 def test_different_scenarios_give_different_dataset_identities():
-    left = from_mapping(VALID).dataset_identity(42)
-    right = from_mapping(config(lots=21)).dataset_identity(42)
+    left = from_mapping(VALID).dataset_identity(42, world_sha256=WORLD_DIGEST)
+    right = from_mapping(config(lots=21)).dataset_identity(
+        42, world_sha256=WORLD_DIGEST)
     assert left.scenario_id != right.scenario_id
     assert left.dataset_id != right.dataset_id
     assert left.build_fingerprint != right.build_fingerprint
+
+
+def test_the_world_participates_in_the_reproducibility_contract():
+    """Same config, same seed, a different world — a different dataset.
+
+    The ids cannot say so (`dataset_id` names a scenario and a seed), which is
+    precisely why the fingerprint has to.
+    """
+    cfg = from_mapping(VALID)
+    baseline = cfg.dataset_identity(42, world_sha256=WORLD_DIGEST)
+    other = cfg.dataset_identity(42, world_sha256=OTHER_WORLD_DIGEST)
+    assert other.build_fingerprint != baseline.build_fingerprint
+    assert other.dataset_id == baseline.dataset_id
+
+
+@pytest.mark.parametrize("bad_digest", [
+    None, "", "not-a-digest", "5C" * 32, "5c" * 31, "5c" * 33, 42,
+])
+def test_a_missing_or_malformed_world_digest_is_rejected(bad_digest):
+    """No placeholder world: a fingerprint that omitted the world would be
+    claiming a reproducibility it cannot deliver."""
+    with pytest.raises(ScenarioConfigError):
+        from_mapping(VALID).dataset_identity(42, world_sha256=bad_digest)
+
+
+def test_the_world_digest_has_no_default():
+    with pytest.raises(TypeError):
+        from_mapping(VALID).dataset_identity(42)
 
 
 @pytest.mark.parametrize("versions", [
@@ -463,8 +645,8 @@ def test_versions_participate_in_the_reproducibility_contract(versions):
     """Same config, same seed, different generator or schema — a different
     build, and the fingerprint says so even though the ids cannot."""
     cfg = from_mapping(VALID)
-    baseline = cfg.dataset_identity(42)
-    other = cfg.dataset_identity(42, **versions)
+    baseline = cfg.dataset_identity(42, world_sha256=WORLD_DIGEST)
+    other = cfg.dataset_identity(42, world_sha256=WORLD_DIGEST, **versions)
     assert other.build_fingerprint != baseline.build_fingerprint
     assert other.dataset_id == baseline.dataset_id
 
@@ -472,14 +654,15 @@ def test_versions_participate_in_the_reproducibility_contract(versions):
 @pytest.mark.parametrize("bad_seed", [-1, "42", 4.2, True])
 def test_invalid_build_seed_is_rejected(bad_seed):
     with pytest.raises((TypeError, ValueError)):
-        from_mapping(VALID).dataset_identity(bad_seed)
+        from_mapping(VALID).dataset_identity(bad_seed,
+                                             world_sha256=WORLD_DIGEST)
 
 
 def test_dataset_id_does_not_disclose_the_scenario():
     """Anti-leakage D5: identifiers are opaque; the slug lives in the config
     and the truth artifact, nowhere else."""
     cfg = from_mapping(config(name="etch-02-chamber-b-is-the-culprit"))
-    identity = cfg.dataset_identity(42)
+    identity = cfg.dataset_identity(42, world_sha256=WORLD_DIGEST)
     haystack = f"{identity.scenario_id} {identity.dataset_id}".lower()
     for token in ("etch", "chamber", "culprit", "uniformity", "demo",
                   "moderate", "benign"):
@@ -499,15 +682,17 @@ def test_identity_ignores_the_file_path(tmp_path):
     first.write_text(text, encoding="utf-8")
     second.write_text(text, encoding="utf-8")
 
-    assert (load_scenario(first).dataset_identity(42)
-            == load_scenario(second).dataset_identity(42))
+    assert (load_scenario(first).dataset_identity(42,
+                                                  world_sha256=WORLD_DIGEST)
+            == load_scenario(second).dataset_identity(
+                42, world_sha256=WORLD_DIGEST))
 
 
 _IDENTITY_PROBE = """
 import json, sys
 from fabsim.scenario import load_scenario_text
 cfg = load_scenario_text(sys.stdin.read())
-identity = cfg.dataset_identity(7)
+identity = cfg.dataset_identity(7, world_sha256="%s")
 print(json.dumps({
     "canonical_json": cfg.canonical_json,
     "config_sha256": cfg.config_sha256,
@@ -515,7 +700,7 @@ print(json.dumps({
     "dataset_id": identity.dataset_id,
     "build_fingerprint": identity.build_fingerprint,
 }, sort_keys=True))
-"""
+""" % WORLD_DIGEST
 
 
 def _probe(cwd, hash_seed: str, extra_env: dict[str, str]) -> str:

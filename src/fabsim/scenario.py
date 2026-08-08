@@ -24,11 +24,18 @@ contract.
                                            ▼
                                       dataset_id    scn-3f9a1c7b2e4d-s042
 
-    (config_sha256, seed, fabsim version, schema version)
+    (config_sha256, world_sha256, seed, fabsim version, schema version)
             │ sha256
             ▼
-      build_fingerprint — the four inputs that fully determine a dataset,
+      build_fingerprint — the five inputs that fully determine a dataset,
       in one comparable value (the input side of acceptance test A1)
+
+`world_sha256` is supplied by the caller, not derived here: a scenario names
+its world by name and this module deliberately does not resolve registries, so
+the digest of the resolved world arrives from the build. It is a *required*
+argument rather than a defaulted one — a fingerprint that quietly omitted the
+world would claim reproducibility it cannot deliver, since two builds of the
+same config against two different worlds are two different datasets.
 
 `name` and `description` are documentation, not semantics: they are excluded
 from the hashed representation, so renaming a scenario or editing its prose
@@ -42,10 +49,11 @@ machine or user name, no locale, no environment variable. The same bytes
 produce the same ids everywhere.
 
 Scope note: this module validates *structure*. Resolving `world` against a
-world template, and `mechanism` against the mechanism registry, happens at
-build time in the slices that own those registries — a config can name a
-world that does not exist yet, and the loader is not the place to pretend
-otherwise.
+world template, `mechanism` against the mechanism registry, and a routing
+condition's product/tool/operation against a world's rosters happens at build
+time in the slices that own those registries (`fabsim.routing` for the last)
+— a config can name a world that does not exist yet, and the loader is not
+the place to pretend otherwise.
 """
 from __future__ import annotations
 
@@ -69,6 +77,7 @@ __all__ = [
     "MAGNITUDES",
     "PROFILE_TYPES",
     "RECOVERY_MODES",
+    "ROUTING_CONDITION_KINDS",
     "SEVERITIES",
     "DatasetIdentity",
     "ScenarioConfig",
@@ -101,6 +110,13 @@ PROFILE_TYPES = ("step", "ramp", "intermittent")
 RECOVERY_MODES = ("none", "partial", "full")
 MAGNITUDES = ("small", "moderate", "large")
 
+#: Kinds of routing condition a scenario may declare (ADR-015). A routing
+#: condition is a *time-bounded experimental condition on the fab's routing
+#: policy* — the confounder of scenario G — and is emphatically not an event:
+#: it is honest, observable data, it changes where wafers go, and it never
+#: touches latent state.
+ROUTING_CONDITION_KINDS = ("product_dedication",)
+
 SCENARIO_ID_PREFIX = "scn-"
 SCENARIO_ID_HEX_CHARS = 12
 
@@ -109,7 +125,8 @@ IDENTITY_DOMAIN = "fabsim.dataset/v1"
 
 _TOP_LEVEL_REQUIRED = (HEADER_KEY, "name", "world", "horizon_days", "lots",
                        "default_seed")
-_TOP_LEVEL_OPTIONAL = ("description", "events", "distractors")
+_TOP_LEVEL_OPTIONAL = ("description", "events", "distractors",
+                       "routing_conditions")
 _TOP_LEVEL_KEYS = _TOP_LEVEL_REQUIRED + _TOP_LEVEL_OPTIONAL
 
 _EVENT_REQUIRED = ("mechanism", "target", "onset_day", "severity")
@@ -119,6 +136,15 @@ _EVENT_KEYS = _EVENT_REQUIRED + _EVENT_OPTIONAL
 _DISTRACTOR_KEYS = ("mechanism", "target", "magnitude")
 _TARGET_KEYS = ("tool", "chamber")
 _RESPONSE_KEYS = ("alarm", "repair_delay_days_mean", "recovery")
+
+#: Fields of each routing-condition kind. `chamber` is absent from every one of
+#: them, and its absence is checked explicitly rather than left to the
+#: unknown-field sweep, because the reason it is absent is a design rule and
+#: deserves to be stated in the rejection.
+_ROUTING_CONDITION_KEYS = {
+    "product_dedication": ("kind", "product", "tool", "operation_type",
+                           "start_day", "end_day", "share"),
+}
 
 #: Defaults filled in during canonicalization. Omitting an optional field and
 #: writing its default are the same configuration and hash the same way.
@@ -131,6 +157,8 @@ _DEFAULT_RESPONSE = {"alarm": False, "repair_delay_days_mean": 0.0,
 # fault status (`SCENARIO_SPECIFICATION.md` §2).
 _IDENTIFIER_RE = re.compile(r"[a-z][a-z0-9_]*")
 _ENTITY_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_OPERATION_RE = re.compile(r"[A-Z][A-Z0-9_]*")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 #: Byte-order mark. Some editors write one; it carries no meaning.
 _BOM = chr(0xFEFF)
@@ -251,7 +279,8 @@ def _as_int(value: Any, path: str, *, minimum: int | None = None,
 
 
 def _as_number(value: Any, path: str, *, minimum: float | None = None,
-               greater_than: float | None = None) -> float:
+               greater_than: float | None = None,
+               less_than: float | None = None) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ScenarioConfigError(
             f"expected a number, got {_type_name(value)}", path)
@@ -261,6 +290,8 @@ def _as_number(value: Any, path: str, *, minimum: float | None = None,
     if greater_than is not None and number <= greater_than:
         raise ScenarioConfigError(f"must be > {greater_than}, got {number}",
                                   path)
+    if less_than is not None and number >= less_than:
+        raise ScenarioConfigError(f"must be < {less_than}, got {number}", path)
     return number
 
 
@@ -344,6 +375,61 @@ def _canonical_event(raw: Any, path: str, horizon_days: int) -> dict[str, Any]:
     }
 
 
+def _canonical_routing_condition(raw: Any, path: str,
+                                 horizon_days: int) -> dict[str, Any]:
+    """A time-bounded experimental condition on the fab's routing policy.
+
+    The one kind defined today is `product_dedication`: during a window, one
+    product's traffic at one operation type prefers one tool. Three properties
+    of its shape are load-bearing (ADR-015):
+
+    * **tool, never chamber.** A chamber-scoped dedication would aim traffic at
+      exactly the grain a fault is later attributed at, and the confounder of
+      scenario G would stop being a confounder and become a pointer. The field
+      does not exist, and stating it is an error rather than a warning.
+    * **`share` strictly between 0 and 1.** A share of 1 is a hard filter, and
+      a hard filter makes product and chamber exposure the *same* variable —
+      the within-product comparison scenario G exists to reward would have no
+      data to run on. A share of 0 is not a condition.
+    * **structure only, here.** Whether `Mobile-28`, `ETCH-01` and `ETCH` are
+      things the world actually has is resolved at build time by
+      `fabsim.routing`, in the same way `world` and `mechanism` are: this
+      module never opens a registry.
+    """
+    obj = _as_object(raw, path)
+    kind = _as_choice(_require(obj, "kind", path), _at(path, "kind"),
+                      ROUTING_CONDITION_KINDS)
+    if "chamber" in obj:
+        raise ScenarioConfigError(
+            "dedication is tool-level; a chamber-scoped dedication would aim "
+            "traffic at exactly the grain a fault is attributed at, and the "
+            "confounder would stop being a confounder and start being a "
+            "pointer", _at(path, "chamber"))
+    _reject_unknown(obj, _ROUTING_CONDITION_KEYS[kind], path)
+
+    start_day = _as_number(_require(obj, "start_day", path),
+                           _at(path, "start_day"), minimum=0.0)
+    if start_day >= horizon_days:
+        raise ScenarioConfigError(
+            f"start_day {start_day} falls outside the {horizon_days}-day "
+            "horizon; a condition that never comes into force is not a "
+            "condition", _at(path, "start_day"))
+    return {
+        "kind": kind,
+        "product": _as_text(_require(obj, "product", path),
+                            _at(path, "product"), _ENTITY_NAME_RE),
+        "tool": _as_text(_require(obj, "tool", path), _at(path, "tool"),
+                         _ENTITY_NAME_RE),
+        "operation_type": _as_text(_require(obj, "operation_type", path),
+                                   _at(path, "operation_type"), _OPERATION_RE),
+        "start_day": start_day,
+        "end_day": _as_number(_require(obj, "end_day", path),
+                              _at(path, "end_day"), greater_than=start_day),
+        "share": _as_number(_require(obj, "share", path), _at(path, "share"),
+                            greater_than=0.0, less_than=1.0),
+    }
+
+
 def _canonical_distractor(raw: Any, path: str) -> dict[str, Any]:
     """Benign structure the diagnosis must not blame."""
     obj = _as_object(raw, path)
@@ -381,6 +467,8 @@ def canonicalize(raw: Mapping[str, Any]) -> dict[str, Any]:
                            minimum=1)
     events = _as_array(obj.get("events", []), "events")
     distractors = _as_array(obj.get("distractors", []), "distractors")
+    conditions = _as_array(obj.get("routing_conditions", []),
+                           "routing_conditions")
 
     return {
         HEADER_KEY: HEADER_VALUE,
@@ -398,6 +486,12 @@ def canonicalize(raw: Mapping[str, Any]) -> dict[str, Any]:
                    for i, event in enumerate(events)],
         "distractors": [_canonical_distractor(d, f"distractors[{i}]")
                         for i, d in enumerate(distractors)],
+        "routing_conditions": [
+            _canonical_routing_condition(condition,
+                                         f"routing_conditions[{i}]",
+                                         horizon_days)
+            for i, condition in enumerate(conditions)
+        ],
     }
 
 
@@ -425,15 +519,16 @@ class DatasetIdentity:
     """The deterministic identity of one dataset.
 
     A dataset is one scenario realized with one seed by one generator against
-    one schema. `dataset_id` names it (`SCENARIO_SPECIFICATION.md` §5);
-    `build_fingerprint` pins all four inputs, so two builds that agree on it
-    are claiming to be the same dataset and must produce the same content
-    (acceptance test A1).
+    one schema *over one world*. `dataset_id` names it
+    (`SCENARIO_SPECIFICATION.md` §5); `build_fingerprint` pins all five inputs,
+    so two builds that agree on it are claiming to be the same dataset and must
+    produce the same content (acceptance test A1).
     """
 
     scenario_id: str
     dataset_id: str
     config_sha256: str
+    world_sha256: str
     seed: int
     fabsim_version: str
     schema_version: str
@@ -446,15 +541,31 @@ def derive_dataset_id(scenario_id: str, seed: int) -> str:
     return f"{scenario_id}-s{seed:03d}"
 
 
-def derive_build_fingerprint(*, config_sha256: str, seed: int,
-                             fabsim_version: str,
+def _validate_world_sha256(value: object) -> str:
+    """Reject anything that is not a world digest.
+
+    The fingerprint's whole value is that agreeing on it means agreeing on the
+    inputs, so a placeholder in the world slot would be a silent hole in the
+    reproducibility claim rather than a visible gap.
+    """
+    if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+        raise ScenarioConfigError(
+            f"world_sha256 must be 64 lowercase hex characters, got {value!r}; "
+            "it comes from `fabsim.world.world_sha256` of the resolved world",
+            "world_sha256")
+    return value
+
+
+def derive_build_fingerprint(*, config_sha256: str, world_sha256: str,
+                             seed: int, fabsim_version: str,
                              schema_version: str) -> str:
-    """SHA-256 over the four inputs that fully determine a dataset."""
+    """SHA-256 over the five inputs that fully determine a dataset."""
     payload = _dumps({
         "config_sha256": config_sha256,
         "fabsim_version": fabsim_version,
         "schema_version": schema_version,
         "seed": seed,
+        "world_sha256": _validate_world_sha256(world_sha256),
     })
     return hashlib.sha256(
         IDENTITY_DOMAIN.encode("ascii") + b"\x00" + payload.encode("utf-8")
@@ -517,6 +628,17 @@ class ScenarioConfig:
     def distractors(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._data["distractors"])
 
+    @property
+    def routing_conditions(self) -> list[dict[str, Any]]:
+        """Experimental routing conditions, in declaration order.
+
+        Structure only; `fabsim.routing` resolves them against a world. Unlike
+        `events`, these are *observable* by design — a dedication window shows
+        up in the emitted routing shares, which is what makes scenario G's
+        confounder honest data rather than hidden state.
+        """
+        return copy.deepcopy(self._data["routing_conditions"])
+
     # -- identity ---------------------------------------------------------
     @property
     def scenario_id(self) -> str:
@@ -527,14 +649,19 @@ class ScenarioConfig:
         self,
         seed: int | None = None,
         *,
+        world_sha256: str,
         fabsim_version: str = FABSIM_VERSION,
         schema_version: str = SCHEMA_VERSION,
     ) -> DatasetIdentity:
-        """Identity of this scenario realized with `seed`.
+        """Identity of this scenario realized with `seed` over one world.
 
-        `seed` defaults to the configuration's `default_seed`. The version
-        arguments exist so a caller can state which generator and schema a
-        dataset belongs to; they default to this build of FabSim.
+        `seed` defaults to the configuration's `default_seed`. `world_sha256`
+        is the digest of the resolved world template
+        (`fabsim.world.world_sha256`) and has no default: this module does not
+        resolve registries, and a fingerprint that guessed at the world would
+        be claiming more than it knows. The version arguments exist so a caller
+        can state which generator and schema a dataset belongs to; they default
+        to this build of FabSim.
         """
         resolved_seed = self.default_seed if seed is None else seed
         validate_master_seed(resolved_seed)
@@ -543,11 +670,13 @@ class ScenarioConfig:
             scenario_id=scenario_id,
             dataset_id=derive_dataset_id(scenario_id, resolved_seed),
             config_sha256=self.config_sha256,
+            world_sha256=_validate_world_sha256(world_sha256),
             seed=resolved_seed,
             fabsim_version=fabsim_version,
             schema_version=schema_version,
             build_fingerprint=derive_build_fingerprint(
                 config_sha256=self.config_sha256,
+                world_sha256=world_sha256,
                 seed=resolved_seed,
                 fabsim_version=fabsim_version,
                 schema_version=schema_version,

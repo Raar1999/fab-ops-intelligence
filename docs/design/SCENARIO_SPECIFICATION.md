@@ -72,6 +72,7 @@ Reference example (the Phase 1 demo scenario):
 | `default_seed` | yes | integer in [0, 2⁶⁴−1] | |
 | `events` | no (`[]`) | array of events | order is significant |
 | `distractors` | no (`[]`) | array of distractors | order is significant |
+| `routing_conditions` | no (`[]`) | array of routing conditions | order is significant; ADR-015 |
 
 Event: `mechanism` (required, `[a-z][a-z0-9_]*`), `target` (required), `onset_day` (required, number in [0, `horizon_days`)), `severity` (required, `subtle` \| `moderate` \| `obvious`), `profile` (default `{"type": "step"}`), `response` (default `{"alarm": false, "repair_delay_days_mean": 0.0, "recovery": "none"}`).
 
@@ -83,9 +84,30 @@ Response: `alarm` (boolean), `repair_delay_days_mean` (number ≥ 0), `recovery`
 
 Distractor: `mechanism` (required), `target` (required), `magnitude` (required, `small` \| `moderate` \| `large`).
 
+Routing condition (ADR-015): `kind` (required, closed vocabulary — `product_dedication` today), `product`, `tool`, `operation_type`, `start_day` (in `[0, horizon_days)`), `end_day` (> `start_day`), `share` (number strictly between 0 and 1). A `chamber` field does not exist and stating one is an error.
+
+### 2.1.1 Routing conditions
+
+```json
+"routing_conditions": [
+  {"kind": "product_dedication", "product": "Mobile-28", "tool": "ETCH-01",
+   "operation_type": "ETCH", "start_day": 28.0, "end_day": 62.0,
+   "share": 0.85}
+]
+```
+
+A routing condition is a **time-bounded experimental condition on the fab's routing policy** — scenario G's confounder. Four properties define it:
+
+- **It is observable, not hidden.** Unlike `events`, the effect of a routing condition is meant to be visible: the routing shift appears in `runs`, and the diagnosis engine is expected to see it and control for it. It touches no latent state and reaches no mechanism.
+- **Dedication is layered.** The *world* template keeps the standing routing policy (`routing.dedications`: the machinery, the qualification map, stickiness, how this fab normally allocates traffic). The *scenario* declares the window. Where both cover a decision, the scenario's condition is what runs — it is the experiment; the standing policy is the background it is contrasted against. Composition lives in `fabsim.routing`.
+- **`share` is a preference, not a filter.** With probability `share` a covered routing decision is restricted to the dedicated tool; otherwise the whole qualified pool — that tool included — is in play. Qualification, chamber eligibility, stickiness and availability are untouched, so the realized share sits somewhat above the configured one and other qualified tools stay reachable. A hard filter would make product and chamber exposure the same variable inside the window, and §4 G's within-product comparison would have no data to run on.
+- **Dedication is tool-level.** A chamber-scoped dedication would aim traffic at exactly the grain a fault is attributed at, turning the confounder into a pointer.
+
+The loader validates *structure*; whether the product, tool and operation type exist in the world, and whether the tool is qualified for the operation, is resolved at build time by `fabsim.routing`, in the same way `world` and `mechanism` are.
+
 Notes:
 
-- **World templates** live beside scenarios (`scenarios/worlds/baseline_fab_v1.json`) and hold everything scenario-independent: entity rosters, flow/recipes, variation-stack magnitudes, defect/yield model constants, PM cadence, breakdown hazards, routing policy. Scenarios stay short diffs against a shared world — which also prevents per-scenario constant tuning (anti-leakage rule D7).
+- **World templates** live beside scenarios (`scenarios/worlds/baseline_fab_v1.json`) and hold everything scenario-independent: entity rosters, flow/recipes, the `measures`/`covers` relations, FDC channels and variation-stack magnitudes, latent sensitivities, classifier confusion, severity calibration, alarm rules, die geometry, PM cadence, breakdown hazards, standing routing policy. Scenarios stay short diffs against a shared world — which also prevents per-scenario constant tuning (anti-leakage rule D7). A scenario adds only its events, its distractors and its routing conditions on top.
 - `"events": []` is legal and is exactly the null scenario; so is omitting the key, which canonicalizes to the same thing.
 - Multiple events are legal (scenario J later); Phase 1 configs use at most one fault event plus distractors.
 - The `target` uses ordinary entity names. Entity names are world vocabulary shared by all scenarios, so a name says nothing about fault status.
@@ -152,7 +174,7 @@ Common world: `baseline_fab_v1` — 6 products, 1 flow (14 steps), 15 tools (3 e
 
 ### G — `confounded_chamber_vs_product` (competing hypotheses)
 
-- **Observable mechanism:** identical fault to B (different chamber, e.g., ETCH-01/A), but the routing policy adds a **dedication window** overlapping the fault: one product (e.g., Mobile-28, a low-target product) is preferentially routed to the faulty chamber during the fault window. Product identity and chamber exposure become correlated; naive GROUP BYs implicate both.
+- **Observable mechanism:** identical fault to B (different chamber, e.g., ETCH-01/A), but the scenario declares a **routing condition** overlapping the fault: one product (e.g., Mobile-28, a low-target product) is preferentially routed to the faulty chamber's *tool* during the fault window, with a share around 0.85 (ADR-015). Product identity and chamber exposure become correlated but not identical; naive GROUP BYs implicate both. The preference is deliberately imperfect: the dedicated product still occasionally routes elsewhere, other products still use the dedicated tool, and within the tool the chamber is still chosen by availability — which is what leaves both control comparisons some data to run on.
 - **Hidden truth:** the chamber fault is causal; the product correlation is declared as a distractor with its realized correlation strength.
 - **Temporal behavior:** as B, plus the dedication window recorded observably in `runs` (the routing shift is visible data, not hidden).
 - **Affected entities:** one chamber; disproportionately one product's wafers.
@@ -177,7 +199,8 @@ Common world: `baseline_fab_v1` — 6 products, 1 flow (14 steps), 15 tools (3 e
 - **`config_sha256`** = SHA-256 over the canonical configuration with `name` and `description` removed — they are documentation, not semantics. Renaming a file or editing prose does not change identity; changing any other field, including `default_seed` or the order of `events`, does.
 - **`scenario_id`** = `scn-` + first 12 hex chars of `config_sha256`, e.g. `scn-3f9a1c7b2e4d`.
 - **`dataset_id`** = `<scenario_id>-s<seed>`, e.g. `scn-3f9a1c7b2e4d-s042`.
-- **`build_fingerprint`** = SHA-256 over the four reproducibility inputs (`config_sha256`, seed, fabsim version, schema version). `dataset_id` names a (scenario, seed) pair; the fingerprint additionally pins *which generator and schema* produced it, so two datasets that share a `dataset_id` but were built by different FabSim versions are distinguishable. It is the input side of acceptance test A1.
+- **`world_sha256`** = SHA-256 over the world template's semantic content: the parsed template with `description` removed, serialized canonically (sorted keys, compact separators, ASCII-escaped), under a versioned domain tag. Key order, indentation and a byte-order mark are parse-level artefacts and normalize away; prose is excluded for the same reason a scenario's is. The digest is conservative in one direction on purpose — a template that omits an optional field and one that writes that field's default hash differently, so it may report a difference between two identical worlds, but it can never report sameness between two different ones.
+- **`build_fingerprint`** = SHA-256 over the five reproducibility inputs (`config_sha256`, `world_sha256`, seed, fabsim version, schema version). `dataset_id` names a (scenario, seed) pair; the fingerprint additionally pins *which world, generator and schema* produced it, so two datasets that share a `dataset_id` but were built against a different world or by a different FabSim version are distinguishable. `world_sha256` is supplied by the build rather than derived by the scenario loader, which never opens a registry, and it has no default: a fingerprint that omitted the world would claim a reproducibility it cannot deliver. It is the input side of acceptance test A1.
 - **Nothing environmental** enters any of these: no wall clock, no file path, no machine or user name, no locale, no environment variable, no Python hash salt.
 - **Filenames** of configs may be descriptive (`demo_edge_uniformity.json`) because fabops never reads `scenarios/`, and because the path has no influence on identity. Emitted dataset directories and manifests use only opaque IDs (anti-leakage rule D5); the slug ↔ id mapping lives in the truth artifact and a maintainers' index in `scenarios/README.md`.
-- **Reproduction statement:** (config file ⇒ `config_sha256`) + seed + fabsim version + schema version fully determine the dataset; all four are in the manifest, and `build_fingerprint` is their single comparable form. `PHASE_1_ACCEPTANCE.md` A1 defines what "the same dataset" is checked against.
+- **Reproduction statement:** (config file ⇒ `config_sha256`) + (world template ⇒ `world_sha256`) + seed + fabsim version + schema version fully determine the dataset; all five are in the manifest, and `build_fingerprint` is their single comparable form. `PHASE_1_ACCEPTANCE.md` A1 defines what "the same dataset" is checked against.

@@ -34,13 +34,19 @@ later cannot reshuffle these draws, and a run's duration does not depend on the
 chamber that ran it (a chamber whose runs were systematically longer would be a
 timing fingerprint — leakage class T8).
 
-**Blindness.** This module reads a scenario's `world`, `lots`, `horizon_days`
-and seed. It never reads `events` or `distractors`: the timeline decides *where
-and when* things happen, and the mechanism layer later decides *what that does*
-to latent state. So two scenarios that differ only in their faults produce the
-same physical schedule at the same seed — which is what makes a fault's effect
-a comparison rather than a confound, and what makes "routing cannot use the
-answer" a property of the code rather than a promise.
+**Blindness.** This module reads a scenario's `world`, `lots`, `horizon_days`,
+`routing_conditions` and seed. It never reads `events` or `distractors`: the
+timeline decides *where and when* things happen, and the mechanism layer later
+decides *what that does* to latent state. So two scenarios that differ only in
+their faults produce the same physical schedule at the same seed — which is
+what makes a fault's effect a comparison rather than a confound, and what makes
+"routing cannot use the answer" a property of the code rather than a promise.
+
+Routing conditions are the one scenario field routing does read, and reading
+them is the point: a dedication window is declared fab policy whose effect is
+plainly visible in `runs` (`SCENARIO_SPECIFICATION.md` §4 G). It shifts
+exposure *shares*, never eligibility, so the pool a wafer could have gone to is
+the same with and without it — see `fabsim.routing`.
 
 What this slice does **not** model: alarms, latent state, fault-driven repairs,
 recovery efficacy, and every observable measurement. Maintenance appears here
@@ -58,8 +64,9 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from fabsim.rng import Substreams, validate_master_seed
+from fabsim.routing import dedication_in_force, effective_dedications
 from fabsim.scenario import ScenarioConfig
-from fabsim.world import MINUTES_PER_DAY, World, load_world
+from fabsim.world import MINUTES_PER_DAY, Dedication, World, load_world
 
 __all__ = [
     "BLOCKING_STATES",
@@ -510,14 +517,22 @@ def _route(world: World, *, product_name: str, operation_type: str,
            chamber_free: Mapping[int, int],
            blocks: Mapping[int, Sequence[tuple[int, int]]],
            last_chamber: Mapping[tuple[int, int], int],
+           dedications: Sequence[Dedication],
            rng: Any) -> tuple[int, int]:
     """Pick a chamber for one wafer at one flow step; return (chamber, start).
 
     In order (`TEMPORAL_MODEL.md` §2.2): candidates are the chambers of every
-    tool qualified for the step's operation type; a dedication window in force
-    narrows them; with probability `stickiness` the lot reuses the chamber its
-    previous wafer used *at this step*; otherwise the earliest-available
-    candidate wins.
+    tool qualified for the step's operation type; a dedication in force may —
+    with probability `share` — restrict *this decision* to the dedicated tool;
+    with probability `stickiness` the lot reuses the chamber its previous wafer
+    used *at this step*; otherwise the earliest-available candidate wins.
+
+    The dedication draw is a preference and not a filter (ADR-015): it changes
+    the probability that traffic lands on the dedicated tool, never which tools
+    are eligible. When the draw does not go the dedication's way the whole
+    qualified pool is back — including the dedicated tool, which is why the
+    realized share sits a little above the configured one. Qualification,
+    chamber eligibility, stickiness and availability are untouched by it.
 
     Ties among equally-available chambers are broken by a seeded draw, not by
     chamber id. Id order is deterministic too, but in a lightly loaded fab
@@ -526,24 +541,28 @@ def _route(world: World, *, product_name: str, operation_type: str,
     dictated by the order entities happen to appear in the world template.
 
     Stickiness is drawn whether or not it can be honoured, so the draw sequence
-    of a wafer does not depend on its lot's history. Earliest-available is what
-    couples routing to downtime: a chamber that is down loses exposure because
-    it is down, not because anything told routing about it.
+    of a wafer does not depend on its lot's history. The dedication draw, by
+    contrast, is taken only where a dedication is actually in force and has
+    somewhere to send the wafer: a world that declares none — every world in
+    the library today — routes exactly as it did before this rule existed.
+    Earliest-available is what couples routing to downtime: a chamber that is
+    down loses exposure because it is down, not because anything told routing
+    about it.
     """
     candidates = world.eligible_chambers(flow_step_id)
     day = ready_min / MINUTES_PER_DAY
-    dedicated_tools = tuple(
-        dedication.tool_name for dedication in world.routing.dedications
-        if dedication.covers(product_name, operation_type, day)
-    )
-    if dedicated_tools:
-        restricted = tuple(
+    dedication = dedication_in_force(dedications, product_name, operation_type,
+                                     day)
+    if dedication is not None:
+        preferred = tuple(
             chamber for chamber in candidates
-            if world.tool(chamber.tool_id).tool_name in dedicated_tools
+            if world.tool(chamber.tool_id).tool_name == dedication.tool_name
         )
-        # A dedication that would leave no candidate is ignored rather than
-        # deadlocking the line.
-        candidates = restricted or candidates
+        # A dedication with no candidate here cannot express itself, and it may
+        # not deadlock the line either; the draw is skipped so that `share`
+        # stays a share of the traffic the dedication could actually take.
+        if preferred and rng.random() < dedication.share:
+            candidates = preferred
 
     coin = rng.random()
     previous = last_chamber.get((lot_id, flow_step_id))
@@ -662,8 +681,8 @@ def _build_events(lots: Sequence[Lot], runs: Sequence[Run],
 # ---------------------------------------------------------------- simulation
 
 
-def simulate(world: World, *, lots: int, horizon_days: int,
-             seed: int) -> Timeline:
+def simulate(world: World, *, lots: int, horizon_days: int, seed: int,
+             dedications: Sequence[Dedication] | None = None) -> Timeline:
     """Run the clock over `world` and return the realized timeline.
 
     The scheduler always advances whichever wafer is ready earliest (ties by
@@ -672,6 +691,14 @@ def simulate(world: World, *, lots: int, horizon_days: int,
     horizon is not recorded at all: its wafer — and its lot — is simply still
     in the line when the window closes, which is what a real fab's WIP looks
     like at any cut-off.
+
+    `dedications` are the dedications *in force* for this build — the world's
+    standing policy with a scenario's routing conditions layered in front of
+    it, as composed by `fabsim.routing.effective_dedications`. Omitted, it is
+    the world's standing policy alone, which is what a world simulated without
+    a scenario means. They are the only thing a scenario tells the timeline
+    beyond its size and its seed, and they are observable policy rather than
+    the answer.
     """
     validate_master_seed(seed)
     if not isinstance(lots, int) or isinstance(lots, bool) or lots < 1:
@@ -683,6 +710,8 @@ def simulate(world: World, *, lots: int, horizon_days: int,
 
     rngs = Substreams(seed)
     horizon_min = horizon_days * MINUTES_PER_DAY
+    active_dedications = (world.routing.dedications if dedications is None
+                          else tuple(dedications))
 
     maintenance, occupied = _schedule_maintenance(world, horizon_min, rngs)
     blocks = {chamber_id: _merge((start, end)
@@ -731,6 +760,7 @@ def simulate(world: World, *, lots: int, horizon_days: int,
             chamber_free=chamber_free,
             blocks=blocks,
             last_chamber=last_chamber,
+            dedications=active_dedications,
             rng=rngs.stream("routing", wafer_id, flow_step.flow_step_id),
         )
         end_min = start_min + duration
@@ -832,14 +862,23 @@ def simulate_scenario(config: ScenarioConfig, seed: int | None = None, *,
                       template_root: str | Path | None = None) -> Timeline:
     """Simulate the timeline a scenario configuration implies.
 
-    Reads `world`, `lots`, `horizon_days` and the seed — and deliberately
-    nothing else. A scenario's `events` and `distractors` are invisible here by
-    design: at a fixed seed, the null scenario and a fault scenario over the
-    same world produce *the same* schedule, and the mechanism layer later
-    changes what that schedule means rather than where the wafers went.
+    Reads `world`, `lots`, `horizon_days`, `routing_conditions` and the seed —
+    and deliberately nothing else. A scenario's `events` and `distractors` are
+    invisible here by design: at a fixed seed, the null scenario and a fault
+    scenario over the same world produce *the same* schedule, and the mechanism
+    layer later changes what that schedule means rather than where the wafers
+    went.
+
+    `routing_conditions` are the one exception, and they are an exception in
+    the honest direction: a dedication window is declared policy whose effect
+    is visible in `runs`, so a diagnosis engine can see and control for it.
+    Two scenarios that differ in their routing conditions differ in their
+    schedules because the fab was run differently, not because the generator
+    leaked anything.
     """
     resolved = world if world is not None else load_world(config.world,
                                                           template_root)
     return simulate(resolved, lots=config.lots,
                     horizon_days=config.horizon_days,
-                    seed=config.default_seed if seed is None else seed)
+                    seed=config.default_seed if seed is None else seed,
+                    dedications=effective_dedications(resolved, config))

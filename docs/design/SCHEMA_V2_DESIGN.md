@@ -88,7 +88,7 @@ The spine, at wafer × flow_step grain: `run_id, wafer_id, flow_step_id, tool_id
 **Questions:** "did a tool parameter shift/drift?", "when?" **Observable:** yes — this is what FDC systems log.
 
 ### 2.15 `metrology`
-`metrology_id, wafer_id, flow_step_id (the measured step), metrology_tool_id, meas_time, param_name, value` — post-step wafer-level measurement by a *metrology* tool (post-etch CD, post-depo thickness, post-CMP removal). Multiple sites per wafer are summarized as `param_name` variants (e.g., `cd_nm_center`, `cd_nm_edge`, `cd_nm_sigma`) rather than a site table — enough spatial resolution for uniformity faults without a new grain.
+`metrology_id, wafer_id, flow_step_id (the measured step), metrology_tool_id, meas_time, param_name, value` — post-step wafer-level measurement by a *metrology* tool (post-etch CD, post-depo thickness, post-CMP removal). Multiple sites per wafer are summarized as `param_name` variants (e.g., `cd_nm_center`, `cd_nm_edge`, `cd_nm_sigma`) rather than a site table — enough spatial resolution for uniformity faults without a new grain. **Which step is "the measured step" is declared, not inferred**: the world template's `measures` relation (§5) names it, so a metrology row's attribution to an upstream chamber is a stated fact rather than a guess about step order.
 **Why:** Tier 2 #8 — metrology distinct from defect inspection, with correct tool attribution (fixes the audited CD-SEM-doing-defect-scans anomaly). This is where drift and uniformity faults become *measurable process effects*.
 **Questions:** "which parameters moved, on which chamber's wafers, starting when?"
 
@@ -108,7 +108,7 @@ The spine, at wafer × flow_step grain: `run_id, wafer_id, flow_step_id, tool_id
 **Questions:** "what interventions happened near the onset?", "did behavior change after maintenance?"
 
 ### 2.19 `inspections`
-As v1: `inspection_id, wafer_id, flow_step_id, inspection_tool_id, inspection_time, total_defect_count, scan_area_mm2` — inspection tools drawn only from defect-inspection metrology (not CD-SEM).
+As v1: `inspection_id, wafer_id, flow_step_id, inspection_tool_id, inspection_time, total_defect_count, scan_area_mm2` — inspection tools drawn only from defect-inspection metrology (not CD-SEM). **Which steps an inspection can see defects from is declared** by the world template's `covers` relation (§5), and the `layer` it reports at comes from the world's closed layer vocabulary — so "this inspection indicts that deposition" is never an inference from adjacency.
 **Question:** "what is the defect rate, by wafer/step/time?"
 
 ### 2.20 `defects`
@@ -140,7 +140,19 @@ As v1: `inspection_id, wafer_id, flow_step_id, inspection_tool_id, inspection_ti
 3. **Reconciliation:** `inspections.total_defect_count` = count of its defects rows; `wafer_yield.good_die + fails` = `total_die` = count of die_bins rows, with `good_die` = count of PASS bins; state intervals per chamber tile the horizon without gaps or overlaps.
 4. **Vocabulary closure:** every categorical value (states, alarm codes, bin codes, classified types, action codes) comes from the world template's shared vocabulary — never minted per event.
 
-## 5. Backward compatibility and migration
+## 5. The world-template contracts behind these tables (Phase 1 Step 3.0)
+
+The tables above are *outputs*. Step 3.0 added the world-template configuration the later slices read to produce them — declarations only: no alarm is generated, no die grid is laid out, no observation is computed. All of it is keyed by operation type, step, product, channel, latent or defect origin, and never by a tool, chamber or event (rule D6).
+
+**`measures` / `covers` — the relations behind 2.15 and 2.19–2.20.** A metrology step declares the process step it reads out (`"measures": "GATE_ETCH"`); an inspection step declares the process steps whose defects it can see and the layer it reports them at (`"covers": [...], "layer": "METAL"`). Neither is inferred from the route. "The step before is the one being measured" is a convention, and a later slice that guessed would be guessing about which chamber a measurement indicts — the Step 3 gate's F1 blocker. Both are validated for existence, for step kind (metrology and inspection observe; only a processing step can be measured or covered), for a measured step actually declaring a metric, and for coming *earlier* on every route that runs them. The loader navigates the relations in both directions: `measured_step`, `metrology_steps_for`, `covered_steps`, `inspection_steps_for`.
+
+**`observation` — the substrate of 2.14, 2.15 and 2.20.** Declares the latent vocabulary; the wafer zones summaries are reported in; the channels (`fdc`, grounded in a recipe setting of the same name; `metrology`, grounded in a step metric) with their natural `scale`, unit, qualifying operation types and their latent → channel `sensitivities`; the `variation_stack` (fab-week, tool offset, chamber offset, lot AR(1), run noise, metrology noise) as dimensionless multiples of a channel's scale, so one stack serves nm, mtorr and watts alike; the `severity_calibration` in σ of the weekly aggregate; and the `classifier` (observable classes, hidden origins, and the confusion matrix, whose rows must be distributions over declared classes with no origin mapping to one class with certainty).
+
+**`alarms` — the vocabulary and thresholds behind 2.17.** A severity vocabulary, a per-chamber background false-alarm rate, a per-check detection probability, and generic rules of the form "this declared signal, this far outside its spread, on tools of these operation types, is worth this code". A rule has no field for an event, a mechanism, a tool or a chamber, so `if <this chamber is faulty> then <this code>` is not expressible; and every code in the baseline can fire on at least two chambers, so no code can be a fingerprint of an entity.
+
+**`die_grid` — the geometry behind 2.21–2.22.** Edge exclusion, street width, die aspect ratio, and the coordinate conventions (origin, index order, partial-die policy) as closed, versioned vocabularies. Combined with the product's `wafer_size_mm` and `die_size_mm2` this determines a die's coordinates from geometry alone, which is what lets the later kill model satisfy ADR-004 structurally rather than by intention. Validated against every product: a die that does not fit its usable wafer is a rejection.
+
+## 6. Backward compatibility and migration
 
 - Schema v2 applies only to fabsim-emitted datasets under `data/scenarios/`. The legacy `data/fab.db` (schema v1), its generator, views, dashboard, notebook, and 27 tests remain untouched and green through Phase 1 (ADR-010).
 - The Phase 2 semantic layer will target v2; compat views mapping the v1 analytical surface (e.g., `v_gate_etch_runs` semantics) onto v2 are a Phase 2 deliverable, not Phase 1.

@@ -97,3 +97,15 @@ Per-wafer effects are correspondingly much smaller than v1's 4σ single-GROUP-BY
 | `benign_offset` | permanent offset only | small stable parameter/defectivity difference; **no** temporal change, no yield path beyond noise floor | distractor, all |
 
 Each mechanism implements one interface: `contribute(latent, t)` plus `truth_record()` — adding a mechanism never touches emit code, keeping the library growable (D, E, F, H, J later) without architectural change.
+
+## 10. As configured (Phase 1 Step 3.0 — `scenarios/worlds/baseline_fab_v1.json`)
+
+Step 3.0 turned §1–§8 into world-template contracts. Nothing here is *implemented* — no latent evolves, no channel is computed, no alarm fires, no defect is classified — but every constant those slices will read now has a declared, validated home, and none of it can be keyed to an entity:
+
+- **§1 latents** — `observation.latents`, a closed vocabulary (`edge_uniformity`, `param_bias`, `particle_load`). Sensitivity maps and latent-sourced alarm rules are validated against it, so a "sensitivity" keyed to a tool name is a rejection rather than a subtle bug.
+- **§2 observation model** — `observation.channels`: each channel declares its kind (`fdc`, grounded in a recipe setting; `metrology`, grounded in a step metric), its qualifying operation types, its natural `scale`, and its latent → channel sensitivities. A channel that reports something the world does not declare is rejected: FDC deltas must have a reference.
+- **§2–§3 variation stack** — `observation.variation_stack`, as dimensionless multiples of a channel's `scale`. The baseline reproduces the §2 CD ladder with run noise as the unit (run 1.0 · lot AR(1) 0.55 · chamber 0.45 · tool 0.33 · fab-week 0.33 · metrology 0.33), which is what makes tool and chamber differences exist everywhere without being faults.
+- **§4.2/§4.5 defect origins and classifier** — `observation.classifier`: the observable `classes`, the hidden `origins`, and a confusion matrix whose rows must be distributions over declared classes. The template spells the uniform-background origin `uniform`; §4.2's `background_uniform` is the same thing (the shorter name keeps the world's vocabulary clear of the token the L1 scan reserves for ground truth).
+- **§5 die grid** — `die_grid`: edge exclusion, street width, aspect ratio and the coordinate conventions, validated against every product's wafer and die size.
+- **§7 alarms** — `alarms`: severity vocabulary, per-chamber background false-alarm rate, per-check detection probability, and generic threshold rules over declared channels and latents. A rule cannot name an event, a mechanism, a tool or a chamber; the fields do not exist.
+- **§8 severity calibration** — `observation.severity_calibration`, in σ of the weekly aggregate (1.5 / 3.0 / 6.0), required to increase strictly so severity stays a detectability setting rather than a label.

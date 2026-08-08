@@ -15,7 +15,11 @@ and the stage the physics will later play on:
 * `fabsim.scenario` the `fabsim.scenario/v1` configuration contract, its
                     canonical form, and the dataset identity model
 * `fabsim.world`    the `fabsim.world/v1` template contract and the static fab
-                    it declares: products, route, recipes, tools, chambers
+                    it declares: products, route, recipes, tools, chambers,
+                    the measures/covers relations, and the generic observation,
+                    alarm and die-grid configuration later slices consume
+* `fabsim.routing`  scenario routing conditions resolved against a world, and
+                    what a share-based dedication means (ADR-015)
 * `fabsim.timeline` the one event clock: lot release, availability-driven
                     routing, chamber occupancy, maintenance, state ribbons
 
@@ -23,6 +27,9 @@ Mechanisms, latent state, the observation models, the observable emitters and
 the truth artifact are later slices. Nothing in this package reads or writes a
 dataset yet, and nothing in it yet reads a scenario's `events`: the world and
 the timeline decide where and when things happen, never what a fault does.
+The Step 3 contracts are declarations only — the alarm, die-grid and
+observation blocks say what the machinery *is*, and no code yet fires an
+alarm, lays out a die grid or computes an observation.
 """
 from __future__ import annotations
 

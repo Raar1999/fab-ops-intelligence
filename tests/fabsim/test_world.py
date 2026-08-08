@@ -19,8 +19,10 @@ from typing import Any
 import pytest
 
 from fabsim.world import (
+    CHANNEL_KINDS,
     CONTRACT,
     MINUTES_PER_DAY,
+    SEVERITY_LEVELS,
     SHIFTS,
     MinuteDistribution,
     WorldTemplateError,
@@ -28,10 +30,23 @@ from fabsim.world import (
     build_world,
     load_world,
     load_world_template,
+    world_sha256,
     world_template_path,
 )
 
 BASELINE = "baseline_fab_v1"
+
+
+def with_step(raw: dict[str, Any], name: str, **overrides: Any
+              ) -> dict[str, Any]:
+    """Apply overrides to one named step of a template, in place."""
+    step = next(s for s in raw["process_steps"] if s["name"] == name)
+    for key, value in overrides.items():
+        if value is None:
+            step.pop(key, None)
+        else:
+            step[key] = value
+    return raw
 
 
 # ------------------------------------------------------------- the registry
@@ -177,31 +192,62 @@ def test_rejects_stickiness_outside_zero_to_one(make_template):
         build_world(make_template(routing={"stickiness": 1.4}))
 
 
+def dedication(**overrides: Any) -> dict[str, Any]:
+    """A standing routing preference in the world template's own shape."""
+    raw = {"product": "Mobile-28", "tool": "ETCH-01", "operation_type": "ETCH",
+           "start_day": 10.0, "end_day": 20.0, "share": 0.7}
+    raw.update(overrides)
+    return raw
+
+
+def routing(**overrides: Any) -> dict[str, Any]:
+    return {"stickiness": 0.6, "dedications": [dedication(**overrides)]}
+
+
 def test_rejects_a_dedication_to_an_unqualified_tool(make_template):
-    dedication = {"product": "Mobile-28", "tool": "CVD-01",
-                  "operation_type": "ETCH", "start_day": 10.0,
-                  "end_day": 20.0}
     with pytest.raises(WorldTemplateError, match="not qualified"):
-        build_world(make_template(routing={"stickiness": 0.6,
-                                           "dedications": [dedication]}))
+        build_world(make_template(routing=routing(tool="CVD-01")))
 
 
 def test_rejects_a_dedication_for_an_unknown_product(make_template):
-    dedication = {"product": "Nope-99", "tool": "ETCH-01",
-                  "operation_type": "ETCH", "start_day": 10.0,
-                  "end_day": 20.0}
     with pytest.raises(WorldTemplateError, match="unknown product"):
-        build_world(make_template(routing={"stickiness": 0.6,
-                                           "dedications": [dedication]}))
+        build_world(make_template(routing=routing(product="Nope-99")))
 
 
 def test_rejects_a_dedication_window_that_ends_before_it_starts(make_template):
-    dedication = {"product": "Mobile-28", "tool": "ETCH-01",
-                  "operation_type": "ETCH", "start_day": 30.0,
-                  "end_day": 30.0}
     with pytest.raises(WorldTemplateError, match="must be > 30"):
+        build_world(make_template(routing=routing(start_day=30.0,
+                                                  end_day=30.0)))
+
+
+@pytest.mark.parametrize("share", [0.0, 1.0, 1.5, -0.2])
+def test_rejects_a_dedication_share_outside_the_open_unit_interval(
+        make_template, share):
+    """ADR-015: 1 is a hard filter and 0 is not a dedication at all."""
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(make_template(routing=routing(share=share)))
+    assert excinfo.value.path == "routing.dedications[0].share"
+
+
+def test_rejects_a_dedication_without_a_share(make_template):
+    raw = dedication()
+    del raw["share"]
+    with pytest.raises(WorldTemplateError) as excinfo:
         build_world(make_template(routing={"stickiness": 0.6,
-                                           "dedications": [dedication]}))
+                                           "dedications": [raw]}))
+    assert excinfo.value.path == "routing.dedications[0].share"
+
+
+def test_rejects_a_chamber_scoped_dedication(make_template):
+    """The rule that keeps scenario G's confounder from being a pointer."""
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(make_template(routing=routing(chamber="B")))
+    assert excinfo.value.path == "routing.dedications[0].chamber"
+    assert "tool-level" in str(excinfo.value)
+
+
+def test_the_baseline_declares_no_standing_dedication(world):
+    assert world.routing.dedications == ()
 
 
 def test_rejects_release_jitter_that_could_reorder_lots(make_template):
@@ -417,6 +463,635 @@ def test_durations_respect_their_floor():
     distribution = MinuteDistribution(mean=10.0, sd=50.0, minimum=6.0)
     rng = random.Random(0)
     assert all(distribution.draw(rng) >= 6 for _ in range(200))
+
+
+# ------------------------------------------------- the measures relation (F1)
+
+
+def test_the_baseline_declares_what_each_metrology_step_measures(world):
+    """Step 3's blocker: what a metrology row indicts must not be a guess."""
+    for metrology, measured in (("GATE_CD_METROLOGY", "GATE_ETCH"),
+                                ("METAL_CD_METROLOGY", "METAL_ETCH")):
+        step = world.step_by_name(metrology)
+        assert world.measured_step(step.step_id).step_name == measured
+
+
+def test_the_measures_relation_is_navigable_from_both_ends(world):
+    etch = world.step_by_name("GATE_ETCH")
+    readouts = world.metrology_steps_for(etch.step_id)
+    assert [s.step_name for s in readouts] == ["GATE_CD_METROLOGY"]
+    assert world.metrology_steps_for(
+        world.step_by_name("METAL_LITHO").step_id) == ()
+
+
+def test_process_steps_measure_nothing(world):
+    for step in world.process_steps:
+        if step.operation_type != "METROLOGY":
+            assert world.measured_step(step.step_id) is None
+
+
+def test_rejects_a_metrology_step_that_measures_nothing(make_template):
+    raw = with_step(make_template(), "GATE_CD_METROLOGY", measures=None)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == "process_steps[3].measures"
+
+
+def test_rejects_a_dangling_measures_reference(make_template):
+    raw = with_step(make_template(), "GATE_CD_METROLOGY",
+                    measures="NOT_A_STEP")
+    with pytest.raises(WorldTemplateError, match="unknown process step"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("target, message", [
+    ("POST_GATE_INSPECT", "observation step"),
+    ("METAL_CD_METROLOGY", "observation step"),
+    ("GATE_CD_METROLOGY", "cannot measure itself"),
+    ("SD_IMPLANT", "declares no metric"),
+])
+def test_rejects_a_measures_reference_of_the_wrong_kind(make_template, target,
+                                                        message):
+    raw = with_step(make_template(), "GATE_CD_METROLOGY", measures=target)
+    with pytest.raises(WorldTemplateError, match=message):
+        build_world(raw)
+
+
+def test_rejects_measures_on_a_step_that_is_not_metrology(make_template):
+    raw = with_step(make_template(), "GATE_ETCH", measures="GATE_LITHO")
+    with pytest.raises(WorldTemplateError, match="valid only on METROLOGY"):
+        build_world(raw)
+
+
+def test_rejects_measuring_a_step_that_comes_later(make_template):
+    raw = with_step(make_template(), "GATE_CD_METROLOGY",
+                    measures="METAL_ETCH")
+    with pytest.raises(WorldTemplateError, match="comes later"):
+        build_world(raw)
+
+
+def test_the_relation_is_not_inferred_from_step_order(make_template):
+    """Declaration order and route position are both irrelevant: the template
+    says what is measured, and moving the declaration changes nothing."""
+    raw = make_template()
+    steps = raw["process_steps"]
+    metrology = steps.pop(next(i for i, s in enumerate(steps)
+                               if s["name"] == "GATE_CD_METROLOGY"))
+    steps.insert(0, metrology)
+    reordered = build_world(raw)
+    step = reordered.step_by_name("GATE_CD_METROLOGY")
+    assert reordered.measured_step(step.step_id).step_name == "GATE_ETCH"
+
+
+# --------------------------------------------------- the covers relation (F1)
+
+
+def test_the_baseline_declares_what_each_inspection_covers(world):
+    for inspection, covered, layer in (
+        ("POST_GATE_INSPECT",
+         ["OXIDE_GROWTH", "GATE_LITHO", "GATE_ETCH"], "GATE"),
+        ("POST_METAL_INSPECT",
+         ["ILD_DEPOSITION", "ILD_CMP", "METAL_DEPOSITION", "METAL_LITHO",
+          "METAL_ETCH"], "METAL"),
+    ):
+        step = world.step_by_name(inspection)
+        assert [s.step_name for s in world.covered_steps(step.step_id)] \
+            == covered
+        assert step.layer == layer
+
+
+def test_coverage_is_navigable_from_both_ends(world):
+    etch = world.step_by_name("METAL_ETCH")
+    assert [s.step_name for s in world.inspection_steps_for(etch.step_id)] \
+        == ["POST_METAL_INSPECT"]
+    # The implant is covered by nothing: coverage is declared, so a step that
+    # no inspection was told about is honestly uncovered.
+    assert world.inspection_steps_for(
+        world.step_by_name("SD_IMPLANT").step_id) == ()
+
+
+def test_non_inspection_steps_cover_nothing_and_carry_no_layer(world):
+    for step in world.process_steps:
+        if not step.is_inspection:
+            assert step.covers_step_ids == ()
+            assert step.layer is None
+
+
+@pytest.mark.parametrize("missing", ["covers", "layer"])
+def test_rejects_an_inspection_that_declares_no_coverage(make_template,
+                                                         missing):
+    raw = with_step(make_template(), "POST_GATE_INSPECT", **{missing: None})
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == f"process_steps[4].{missing}"
+
+
+def test_rejects_an_empty_coverage_list(make_template):
+    raw = with_step(make_template(), "POST_GATE_INSPECT", covers=[])
+    with pytest.raises(WorldTemplateError, match="at least 1 item"):
+        build_world(raw)
+
+
+def test_rejects_a_dangling_covers_reference(make_template):
+    raw = with_step(make_template(), "POST_GATE_INSPECT",
+                    covers=["GATE_ETCH", "NOT_A_STEP"])
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == "process_steps[4].covers[1]"
+    assert "unknown process step" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("covers, message", [
+    (["GATE_CD_METROLOGY"], "observation step"),
+    (["POST_METAL_INSPECT"], "observation step"),
+    (["GATE_ETCH", "GATE_ETCH"], "duplicate covered step"),
+    (["METAL_ETCH"], "comes later"),
+])
+def test_rejects_a_covers_reference_of_the_wrong_kind(make_template, covers,
+                                                      message):
+    raw = with_step(make_template(), "POST_GATE_INSPECT", covers=covers)
+    with pytest.raises(WorldTemplateError, match=message):
+        build_world(raw)
+
+
+def test_rejects_an_unknown_layer(make_template):
+    raw = with_step(make_template(), "POST_GATE_INSPECT", layer="BACKSIDE")
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == "process_steps[4].layer"
+
+
+def test_rejects_covers_on_a_step_that_is_not_an_inspection(make_template):
+    raw = with_step(make_template(), "GATE_ETCH", covers=["GATE_LITHO"])
+    with pytest.raises(WorldTemplateError,
+                       match="valid only on inspection steps"):
+        build_world(raw)
+
+
+def test_rejects_an_inspection_that_is_not_an_inspection_operation(
+        make_template):
+    raw = with_step(make_template(), "GATE_ETCH", is_inspection=True,
+                    covers=["GATE_LITHO"], layer="GATE")
+    with pytest.raises(WorldTemplateError, match="must be an INSPECTION"):
+        build_world(raw)
+
+
+def test_rejects_a_layer_vocabulary_that_is_empty(make_template):
+    with pytest.raises(WorldTemplateError, match="at least 1 item"):
+        build_world(make_template(layers=[]))
+
+
+# ------------------------------------------------------------ alarm contract
+
+
+def test_the_baseline_declares_generic_alarm_rules(world):
+    policy = world.alarms
+    assert policy.codes
+    assert policy.severities == ("INFO", "WARNING", "CRITICAL")
+    assert 0.0 < policy.background_rate_per_chamber_day < 1.0
+    assert 0.0 < policy.detection_probability <= 1.0
+    for code in policy.codes:
+        assert code.threshold_sigma > 0.0
+        assert code.severity in policy.severities
+        assert code.operation_types
+        assert policy.code_by_name(code.code) is code
+
+
+def test_every_alarm_rule_watches_a_declared_signal(world):
+    channels = {c.name for c in world.observation.channels}
+    for code in world.alarms.codes:
+        known = channels if code.source == "channel" else set(
+            world.observation.latents)
+        assert code.signal in known
+
+
+def test_every_alarm_code_can_fire_on_more_than_one_chamber(world):
+    """Rule D2: a code whose only possible source is one entity would be a
+    fingerprint of that entity, whatever the background rate did."""
+    for code in world.alarms.codes:
+        chambers = {chamber.chamber_id
+                    for operation in code.operation_types
+                    for tool in world.tools_for_operation(operation)
+                    for chamber in world.chambers_of(tool.tool_id)}
+        assert len(chambers) >= 2, code.code
+
+
+def test_alarm_codes_are_shared_across_operation_types(world):
+    """No code belongs to one kind of tool alone: the codes that matter for
+    the Phase 1 mechanisms are raisable wherever the mechanism could act."""
+    reach = {code.code: set(code.operation_types) for code in world.alarms.codes}
+    assert {"ETCH", "CVD", "PVD"} <= reach["PRESSURE_HI"]
+    assert {"ETCH", "CVD", "PVD", "CMP"} <= reach["PARTICLE_HI"]
+
+
+def test_no_alarm_rule_can_name_an_entity_or_an_event(world):
+    """The contract has no field for one — this pins that it stays that way."""
+    fields = set(vars(world.alarms.codes[0]))
+    assert fields == {"code", "source", "signal", "operation_types",
+                      "threshold_sigma", "severity", "message"}
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"threshold_sigma": 0.0}, "alarms.codes[0].threshold_sigma"),
+    ({"threshold_sigma": -1.0}, "alarms.codes[0].threshold_sigma"),
+    ({"threshold_sigma": "3"}, "alarms.codes[0].threshold_sigma"),
+    ({"signal": "not_a_channel"}, "alarms.codes[0].signal"),
+    ({"source": "vibes"}, "alarms.codes[0].source"),
+    ({"severity": "APOCALYPTIC"}, "alarms.codes[0].severity"),
+    ({"operation_types": ["ETCH", "ETCH"]},
+     "alarms.codes[0].operation_types[1]"),
+    ({"operation_types": ["PLASMA_MAGIC"]},
+     "alarms.codes[0].operation_types[0]"),
+    ({"code": "pressure_hi"}, "alarms.codes[0].code"),
+    ({"escalation": "page"}, "alarms.codes[0]"),
+])
+def test_rejects_an_invalid_alarm_rule(make_template, overrides, path):
+    raw = make_template()
+    raw["alarms"]["codes"][0].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_a_latent_alarm_watching_something_that_is_not_a_latent(
+        make_template):
+    raw = make_template()
+    raw["alarms"]["codes"][0].update({"source": "latent",
+                                      "signal": "chamber_pressure_mtorr"})
+    with pytest.raises(WorldTemplateError, match="unknown latent"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"background_rate_per_chamber_day": 0.0},
+     "alarms.background_rate_per_chamber_day"),
+    ({"detection_probability": 0.0}, "alarms.detection_probability"),
+    ({"detection_probability": 1.5}, "alarms.detection_probability"),
+    ({"codes": []}, "alarms.codes"),
+    ({"severities": []}, "alarms.severities"),
+])
+def test_rejects_an_invalid_alarm_policy(make_template, overrides, path):
+    raw = make_template()
+    raw["alarms"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_duplicate_alarm_codes(make_template):
+    raw = make_template()
+    raw["alarms"]["codes"][1]["code"] = raw["alarms"]["codes"][0]["code"]
+    with pytest.raises(WorldTemplateError, match="duplicate alarm code"):
+        build_world(raw)
+
+
+# --------------------------------------------------------- die-grid contract
+
+
+def test_the_baseline_declares_a_die_geometry(world):
+    grid = world.die_grid
+    assert grid.edge_exclusion_mm > 0.0
+    assert grid.street_width_mm >= 0.0
+    assert grid.die_aspect_ratio > 0.0
+    assert grid.origin == "wafer_center"
+    assert grid.index_order == "row_major"
+    assert grid.partial_die_policy == "exclude"
+
+
+def test_the_die_geometry_needs_only_the_product_to_be_resolved(world):
+    """The later kill model must reach a die's coordinates from geometry, and
+    geometry is wafer size, die area and this policy — nothing else."""
+    for product in world.products:
+        usable = product.wafer_size_mm - 2.0 * world.die_grid.edge_exclusion_mm
+        side = (product.die_size_mm2 * world.die_grid.die_aspect_ratio) ** 0.5
+        assert 0.0 < side + world.die_grid.street_width_mm <= usable
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"edge_exclusion_mm": -1.0}, "die_grid.edge_exclusion_mm"),
+    ({"edge_exclusion_mm": 200.0}, "die_grid.edge_exclusion_mm"),
+    ({"street_width_mm": -0.1}, "die_grid.street_width_mm"),
+    ({"die_aspect_ratio": 0.0}, "die_grid.die_aspect_ratio"),
+    ({"die_aspect_ratio": "1"}, "die_grid.die_aspect_ratio"),
+    ({"origin": "wafer_notch"}, "die_grid.origin"),
+    ({"index_order": "spiral"}, "die_grid.index_order"),
+    ({"partial_die_policy": "count_them"}, "die_grid.partial_die_policy"),
+    ({"reticle_shot_mm": 26.0}, "die_grid"),
+])
+def test_rejects_an_invalid_die_geometry(make_template, overrides, path):
+    raw = make_template()
+    raw["die_grid"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_a_die_that_does_not_fit_its_wafer(make_template):
+    raw = make_template()
+    raw["die_grid"]["die_aspect_ratio"] = 900.0
+    with pytest.raises(WorldTemplateError, match="does not fit"):
+        build_world(raw)
+
+
+def test_the_die_geometry_is_deterministic(template):
+    assert build_world(template).die_grid == build_world(template).die_grid
+
+
+# ------------------------------------------------ observation configuration
+
+
+def test_the_baseline_declares_the_observation_stack(world):
+    observation = world.observation
+    assert observation.latents == ("edge_uniformity", "param_bias",
+                                   "particle_load")
+    assert "edge" in observation.wafer_zones
+    assert observation.channels
+    assert observation.variation.run_noise > 0.0
+    assert 0.0 <= observation.variation.lot_ar1_phi < 1.0
+
+
+def test_every_channel_is_grounded_in_something_the_world_declares(world):
+    for channel in world.observation.channels:
+        assert channel.kind in CHANNEL_KINDS
+        assert channel.scale > 0.0
+        steps = [s for s in world.process_steps
+                 if s.operation_type in channel.operation_types]
+        if channel.kind == "fdc":
+            assert any(channel.name in dict(s.settings) for s in steps)
+        else:
+            assert any(s.metric is not None and s.metric.name == channel.name
+                       for s in steps)
+
+
+def test_sensitivities_are_keyed_by_latent_only(world):
+    for channel in world.observation.channels:
+        for latent, coefficient in channel.sensitivities:
+            assert latent in world.observation.latents
+            assert isinstance(coefficient, float)
+
+
+def test_channels_are_reachable_by_name_and_by_operation(world):
+    assert world.channel("cd_nm").kind == "metrology"
+    etch = {c.name for c in world.channels_for_operation("ETCH")}
+    assert "cd_nm" in etch and "gas_flow_sccm" in etch
+    assert "down_force_psi" not in etch
+
+
+def test_severity_calibration_is_the_difficulty_axis(world):
+    calibration = dict(world.observation.severity_calibration)
+    assert tuple(calibration) == SEVERITY_LEVELS
+    assert (calibration["subtle"] < calibration["moderate"]
+            < calibration["obvious"])
+    for level in SEVERITY_LEVELS:
+        assert world.observation.sigma_for(level) == calibration[level]
+
+
+def test_severity_vocabularies_agree():
+    """Two contracts, one vocabulary; this keeps the copies from drifting."""
+    from fabsim.scenario import SEVERITIES
+
+    assert SEVERITY_LEVELS == SEVERITIES
+
+
+def test_the_confusion_matrix_is_a_distribution_over_declared_classes(world):
+    classifier = world.observation.classifier
+    assert set(dict(classifier.confusion)) == set(classifier.origins)
+    for origin, row in classifier.confusion:
+        assert classifier.row(origin) == row
+        assert abs(sum(p for _label, p in row) - 1.0) < 1e-9
+        assert all(label in classifier.classes for label, _p in row)
+        # Overlap, not a partition: no origin maps to one class with
+        # certainty, or spatial "confirmation" would be circular again (D3).
+        assert max(p for _label, p in row) < 1.0
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"latents": []}, "observation.latents"),
+    ({"wafer_zones": ["edge"]}, "observation.wafer_zones"),
+    ({"channels": []}, "observation.channels"),
+    ({"detector_gain": 1.0}, "observation"),
+])
+def test_rejects_an_invalid_observation_block(make_template, overrides, path):
+    raw = make_template()
+    raw["observation"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"name": "not_a_setpoint"}, "observation.channels[0].name"),
+    ({"kind": "telemetry"}, "observation.channels[0].kind"),
+    ({"scale": 0.0}, "observation.channels[0].scale"),
+    ({"scale": -1.0}, "observation.channels[0].scale"),
+    ({"operation_types": []}, "observation.channels[0].operation_types"),
+    ({"operation_types": ["PLASMA_MAGIC"]},
+     "observation.channels[0].operation_types[0]"),
+    ({"sensitivities": {"gremlins": 1.0}},
+     "observation.channels[0].sensitivities.gremlins"),
+    ({"drift_rate": 1.0}, "observation.channels[0]"),
+])
+def test_rejects_an_invalid_channel(make_template, overrides, path):
+    raw = make_template()
+    raw["observation"]["channels"][0].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_a_channel_keyed_to_an_entity(make_template):
+    """Rule D6, made unrepresentable: sensitivities take latent names, and a
+    tool or chamber name is not one."""
+    raw = make_template()
+    raw["observation"]["channels"][0]["sensitivities"] = {"ETCH-02": 1.0}
+    with pytest.raises(WorldTemplateError, match="not a declared latent"):
+        build_world(raw)
+
+
+def test_rejects_a_metrology_channel_with_no_metric_behind_it(make_template):
+    raw = make_template()
+    raw["observation"]["channels"].append({
+        "name": "sheet_resistance_ohm", "kind": "metrology",
+        "operation_types": ["ETCH"], "scale": 1.0, "sensitivities": {}})
+    with pytest.raises(WorldTemplateError, match="a step metric"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"run_noise": 0.0}, "observation.variation_stack.run_noise"),
+    ({"lot_ar1_phi": 1.0}, "observation.variation_stack.lot_ar1_phi"),
+    ({"lot_ar1_phi": -0.1}, "observation.variation_stack.lot_ar1_phi"),
+    ({"chamber_offset": -1.0}, "observation.variation_stack.chamber_offset"),
+    ({"wafer_noise": 1.0}, "observation.variation_stack"),
+])
+def test_rejects_an_invalid_variation_stack(make_template, overrides, path):
+    raw = make_template()
+    raw["observation"]["variation_stack"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_a_severity_calibration_that_is_not_an_axis(make_template):
+    raw = make_template()
+    raw["observation"]["severity_calibration"] = {"subtle": 6.0,
+                                                  "moderate": 3.0,
+                                                  "obvious": 1.5}
+    with pytest.raises(WorldTemplateError, match="increase strictly"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("severities, path", [
+    ({"subtle": 0.0}, "observation.severity_calibration.subtle"),
+    ({"catastrophic": 9.0}, "observation.severity_calibration"),
+])
+def test_rejects_an_invalid_severity_calibration(make_template, severities,
+                                                 path):
+    raw = make_template()
+    raw["observation"]["severity_calibration"].update(severities)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_a_confusion_row_that_is_not_a_distribution(make_template):
+    raw = make_template()
+    raw["observation"]["classifier"]["confusion"]["uniform"]["PARTICLE"] = 0.9
+    with pytest.raises(WorldTemplateError, match="must sum to 1"):
+        build_world(raw)
+
+
+def test_rejects_a_confusion_row_for_an_undeclared_origin(make_template):
+    raw = make_template()
+    raw["observation"]["classifier"]["confusion"]["chamber_b"] = {
+        "PARTICLE": 1.0}
+    with pytest.raises(WorldTemplateError,
+                       match="not a declared defect origin"):
+        build_world(raw)
+
+
+def test_rejects_a_missing_confusion_row(make_template):
+    raw = make_template()
+    del raw["observation"]["classifier"]["confusion"]["scratch"]
+    with pytest.raises(WorldTemplateError, match="no confusion row"):
+        build_world(raw)
+
+
+def test_rejects_a_confusion_row_naming_an_undeclared_class(make_template):
+    raw = make_template()
+    raw["observation"]["classifier"]["confusion"]["scratch"] = {"KILLER": 1.0}
+    with pytest.raises(WorldTemplateError, match="not a declared class"):
+        build_world(raw)
+
+
+# --------------------------------------------------------- world identity
+
+
+def test_the_same_world_hashes_the_same_way(template):
+    assert world_sha256(template) == world_sha256(template)
+    assert build_world(template).world_sha256 == world_sha256(template)
+    assert re.fullmatch(r"[0-9a-f]{64}", build_world(template).world_sha256)
+
+
+@pytest.mark.parametrize("mutate", [
+    pytest.param(lambda raw: raw.update(wafers_per_lot=24), id="lot-size"),
+    pytest.param(lambda raw: raw["routing"].update(stickiness=0.61),
+                 id="stickiness"),
+    pytest.param(lambda raw: raw["products"][0].update(mix_weight=9),
+                 id="product-mix"),
+    pytest.param(lambda raw: raw["die_grid"].update(edge_exclusion_mm=2.0),
+                 id="die-geometry"),
+    pytest.param(lambda raw: raw["alarms"]["codes"][0].update(
+        threshold_sigma=2.0), id="alarm-threshold"),
+    pytest.param(lambda raw: raw["observation"]["channels"][0].update(
+        scale=0.4), id="channel-scale"),
+    pytest.param(lambda raw: raw["observation"]["variation_stack"].update(
+        run_noise=1.1), id="variation-stack"),
+])
+def test_a_semantic_change_changes_the_world_hash(template, mutate):
+    """Anything that can move emitted data must move the identity with it."""
+    import copy
+
+    changed = copy.deepcopy(template)
+    mutate(changed)
+    assert world_sha256(changed) != world_sha256(template)
+
+
+def test_prose_is_not_part_of_the_world_identity(template):
+    """Documentation never reaches an observable, so editing it must not
+    claim that a different dataset was produced."""
+    import copy
+
+    reworded = copy.deepcopy(template)
+    reworded["description"] = "an entirely different description"
+    assert world_sha256(reworded) == world_sha256(template)
+
+
+def test_formatting_is_not_part_of_the_world_identity(tmp_path: Path,
+                                                      template: dict[str, Any]):
+    """Key order, indentation and a byte-order mark are editor artefacts."""
+    import json
+
+    def reorder(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: reorder(v) for k, v in reversed(list(value.items()))}
+        if isinstance(value, list):
+            return [reorder(v) for v in value]
+        return value
+
+    for name, payload in (("indented", json.dumps(template, indent=4)),
+                          ("reordered", json.dumps(reorder(template))),
+                          ("bom", "﻿" + json.dumps(template))):
+        path = tmp_path / name
+        path.mkdir()
+        (path / f"{BASELINE}.json").write_text(payload, encoding="utf-8")
+        assert load_world(BASELINE, path).world_sha256 == \
+            load_world(BASELINE).world_sha256
+
+
+_WORLD_IDENTITY_PROBE = """
+import sys
+from fabsim.world import load_world
+print(load_world("baseline_fab_v1").world_sha256)
+"""
+
+
+def test_the_world_identity_ignores_process_and_environment(tmp_path: Path):
+    """No wall clock, no cwd, no locale, no hash salt — the same bytes give
+    the same identity everywhere (`SCENARIO_SPECIFICATION.md` §5)."""
+    import os
+    import subprocess
+    import sys
+
+    digests = []
+    for name, hash_seed, extra in (("a", "0", {"LANG": "C", "TZ": "UTC"}),
+                                   ("b", "999", {"LANG": "de_DE.UTF-8",
+                                                 "TZ": "Asia/Tokyo",
+                                                 "FABSIM_UNRELATED": "x"})):
+        directory = tmp_path / name
+        directory.mkdir()
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = hash_seed
+        env.update(extra)
+        digests.append(subprocess.run(
+            [sys.executable, "-c", _WORLD_IDENTITY_PROBE], cwd=str(directory),
+            env=env, capture_output=True, text=True, check=True).stdout)
+    assert digests[0] == digests[1]
+    assert digests[0].strip() == load_world(BASELINE).world_sha256
+
+
+def test_a_world_digest_reaches_the_build_fingerprint():
+    """The reproducibility contract's fifth input, wired end to end."""
+    from fabsim.scenario import from_mapping
+
+    config = from_mapping({"fabsim": "scenario/v1", "name": "null",
+                           "world": BASELINE, "horizon_days": 84, "lots": 20,
+                           "default_seed": 42})
+    world = load_world(BASELINE)
+    identity = config.dataset_identity(42, world_sha256=world.world_sha256)
+    assert identity.world_sha256 == world.world_sha256
+    assert identity.build_fingerprint != config.dataset_identity(
+        42, world_sha256="0" * 64).build_fingerprint
 
 
 # ---------------------------------------------------------------- neutrality

@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from fabsim.rng import stream
-from fabsim.scenario import from_mapping
+from fabsim.scenario import ScenarioConfigError, from_mapping
 from fabsim.timeline import (
     BLOCKING_STATES,
     EVENT_KINDS,
@@ -662,40 +662,209 @@ def _mean_chamber_reuse(timeline: Timeline) -> float:
     return sum(shares) / len(shares)
 
 
-def test_a_dedication_window_moves_routing_shares_observably(make_world):
-    """Scenario G's confounder is a routing policy, and it is visible in data."""
-    dedication = {"product": "Mobile-28", "tool": "ETCH-01",
-                  "operation_type": "ETCH", "start_day": 20.0,
-                  "end_day": 60.0}
+# ------------------------------------------------------- routing conditions
+#
+# ADR-015: a dedication is a *share*, not a filter. These tests are about what
+# that does to traffic; the contract shape lives in `test_scenario.py` and the
+# resolution against a world in `test_routing.py`. They are statistical by
+# necessity — a share is a distributional statement — so they measure a
+# realization big enough to mean something and compare it against the *same*
+# world without the dedication, rather than against a number typed in here.
+
+DEDICATED_TOOL = "ETCH-01"
+DEDICATED_PRODUCT = "Mobile-28"
+DEDICATION_WINDOW = (20.0, 60.0)
+DEDICATION_SHARE = 0.85
+
+
+def dedication_condition(**overrides: Any) -> dict[str, Any]:
+    raw = {
+        "kind": "product_dedication",
+        "product": DEDICATED_PRODUCT,
+        "tool": DEDICATED_TOOL,
+        "operation_type": "ETCH",
+        "start_day": DEDICATION_WINDOW[0],
+        "end_day": DEDICATION_WINDOW[1],
+        "share": DEDICATION_SHARE,
+    }
+    raw.update(overrides)
+    return raw
+
+
+def etch_runs_in_window(timeline: Timeline, product_name: str,
+                        window: tuple[float, float]) -> list[Any]:
+    """One product's etch runs whose start falls inside a day window."""
+    world = timeline.world
+    product_id = world.product_by_name(product_name).product_id
+    etch_steps = {fs.step_id for fs in world.flow_steps
+                  if world.step(fs.step_id).operation_type == "ETCH"}
+    start, end = window
+    return [run for run in timeline.runs
+            if run.step_id in etch_steps
+            and timeline.lot(run.lot_id).product_id == product_id
+            and start <= run.start_min / MINUTES_PER_DAY < end]
+
+
+def dedicated_share(timeline: Timeline, tool_name: str, product_name: str,
+                    window: tuple[float, float]) -> float:
+    runs = etch_runs_in_window(timeline, product_name, window)
+    assert runs, "the fixture must produce traffic inside the window"
+    tool_id = timeline.world.tool_by_name(tool_name).tool_id
+    return sum(run.tool_id == tool_id for run in runs) / len(runs)
+
+
+def dedicated_timeline(world: World, **overrides: Any) -> Timeline:
+    config = from_mapping({**SCENARIO,
+                           "routing_conditions": [
+                               dedication_condition(**overrides)]})
+    return simulate_scenario(config, world=world)
+
+
+def test_a_dedication_window_moves_routing_shares_observably(world):
+    """Scenario G's confounder is routing policy, and it is visible in data."""
+    dedicated = dedicated_timeline(world)
+    plain = simulate_scenario(from_mapping(SCENARIO), world=world)
+
+    inside = dedicated_share(dedicated, DEDICATED_TOOL, DEDICATED_PRODUCT,
+                             DEDICATION_WINDOW)
+    before = dedicated_share(dedicated, DEDICATED_TOOL, DEDICATED_PRODUCT,
+                             (0.0, DEDICATION_WINDOW[0]))
+    undedicated = dedicated_share(plain, DEDICATED_TOOL, DEDICATED_PRODUCT,
+                                  DEDICATION_WINDOW)
+
+    assert inside > undedicated
+    assert inside > before
+    # The window is a window: outside it the same product routes as it always
+    # did, so the shift is bounded in time and an investigator can see that.
+    assert before < 0.7
+
+
+def test_a_dedication_is_a_share_and_not_an_exclusive_assignment(world):
+    """`share: 0.85` must not become "all of it" — the Step 2 behaviour."""
+    timeline = dedicated_timeline(world)
+    runs = etch_runs_in_window(timeline, DEDICATED_PRODUCT, DEDICATION_WINDOW)
+    tool_id = world.tool_by_name(DEDICATED_TOOL).tool_id
+    elsewhere = [run for run in runs if run.tool_id != tool_id]
+
+    assert elsewhere, "the dedicated product must still reach other etch tools"
+    share = dedicated_share(timeline, DEDICATED_TOOL, DEDICATED_PRODUCT,
+                            DEDICATION_WINDOW)
+    # Realized share sits a little above the configured one, because the
+    # traffic the draw releases can still land on the dedicated tool. What is
+    # under test is the *shape*: a preference, bounded away from 1.
+    assert 0.6 < share < 1.0
+
+
+def test_a_dedication_does_not_change_who_is_eligible(world):
+    """Exposure probability moves; qualification and eligibility do not."""
+    timeline = dedicated_timeline(world)
+    etch_tools = {t.tool_id for t in world.tools_for_operation("ETCH")}
+    used = {run.tool_id for run in timeline.runs if run.tool_id in etch_tools}
+    assert used == etch_tools
+
+    etch_chambers = {c.chamber_id for t in world.tools_for_operation("ETCH")
+                     for c in world.chambers_of(t.tool_id)}
+    assert {run.chamber_id for run in timeline.runs
+            if run.chamber_id in etch_chambers} == etch_chambers
+
+
+def test_a_dedication_cannot_aim_at_a_chamber(world):
+    """Tool-level by construction: within the dedicated tool, chambers are
+    still chosen by availability, so the confounder cannot point at the grain
+    a fault is attributed at."""
+    timeline = dedicated_timeline(world)
+    tool = world.tool_by_name(DEDICATED_TOOL)
+    inside = etch_runs_in_window(timeline, DEDICATED_PRODUCT,
+                                 DEDICATION_WINDOW)
+    used = {run.chamber_id for run in inside if run.tool_id == tool.tool_id}
+    assert used == set(tool.chamber_ids)
+
+    with pytest.raises(ScenarioConfigError):
+        from_mapping({**SCENARIO, "routing_conditions": [
+            dedication_condition(chamber="A")]})
+
+
+def test_other_products_keep_using_the_dedicated_tool(world):
+    """A dedication is a shift in shares, not a partition of the fab."""
+    timeline = dedicated_timeline(world)
+    tool_id = world.tool_by_name(DEDICATED_TOOL).tool_id
+    product_id = world.product_by_name(DEDICATED_PRODUCT).product_id
+    others = [run for run in timeline.runs
+              if run.tool_id == tool_id
+              and timeline.lot(run.lot_id).product_id != product_id
+              and DEDICATION_WINDOW[0] <= run.start_min / MINUTES_PER_DAY
+              < DEDICATION_WINDOW[1]]
+    assert others
+
+
+def test_a_stronger_share_moves_more_traffic(world):
+    """The knob is a knob: the realized share is monotone in the configured
+    one, which is what makes it a difficulty setting rather than a switch."""
+    shares = [
+        dedicated_share(dedicated_timeline(world, share=share),
+                        DEDICATED_TOOL, DEDICATED_PRODUCT, DEDICATION_WINDOW)
+        for share in (0.3, 0.85)
+    ]
+    assert shares[0] < shares[1]
+
+
+def test_a_dedicated_realization_is_deterministic(world):
+    config = from_mapping({**SCENARIO,
+                           "routing_conditions": [dedication_condition()]})
+    first = simulate_scenario(config, world=world)
+    second = simulate_scenario(config, world=world)
+    assert first.content_sha256() == second.content_sha256()
+    assert_structural_invariants(first)
+
+
+def test_a_world_without_dedications_routes_exactly_as_before(world):
+    """The dedication draw is taken only where a dedication is in force, so
+    adding the rule cannot reshuffle a world that declares none."""
+    plain = simulate_scenario(from_mapping(SCENARIO), world=world)
+    assert plain.content_sha256() == baseline(world).content_sha256()
+
+
+def test_dedication_leaves_unrelated_seeds_alone(world):
+    """Different seeds are different realizations; both obey the invariants."""
+    config = from_mapping({**SCENARIO,
+                           "routing_conditions": [dedication_condition()]})
+    first = simulate_scenario(config, world=world)
+    second = simulate_scenario(config, 43, world=world)
+    assert first.content_sha256() != second.content_sha256()
+    for timeline in (first, second):
+        assert_structural_invariants(timeline)
+        assert 0.6 < dedicated_share(timeline, DEDICATED_TOOL,
+                                     DEDICATED_PRODUCT,
+                                     DEDICATION_WINDOW) < 1.0
+
+
+def test_a_standing_world_dedication_behaves_the_same_way(make_world):
+    """The world keeps its routing machinery; the layers share semantics."""
+    dedication = {"product": DEDICATED_PRODUCT, "tool": DEDICATED_TOOL,
+                  "operation_type": "ETCH",
+                  "start_day": DEDICATION_WINDOW[0],
+                  "end_day": DEDICATION_WINDOW[1],
+                  "share": DEDICATION_SHARE}
     world = make_world(routing={"stickiness": 0.6,
                                 "dedications": [dedication]})
     timeline = baseline(world)
-    dedicated_tool = world.tool_by_name("ETCH-01").tool_id
-    product = world.product_by_name("Mobile-28").product_id
-    etch_steps = {fs.step_id for fs in world.flow_steps
-                  if world.step(fs.step_id).operation_type == "ETCH"}
+    share = dedicated_share(timeline, DEDICATED_TOOL, DEDICATED_PRODUCT,
+                            DEDICATION_WINDOW)
+    assert 0.6 < share < 1.0
 
-    inside, outside = [], []
-    for run in timeline.runs:
-        if run.step_id not in etch_steps:
-            continue
-        if timeline.lot(run.lot_id).product_id != product:
-            continue
-        day = run.start_min / MINUTES_PER_DAY
-        if 21.0 <= day <= 59.0:
-            inside.append(run)
-        elif day < 19.0 or day > 61.0:
-            outside.append(run)
 
-    assert inside and outside
-    assert all(run.tool_id == dedicated_tool for run in inside)
-    assert any(run.tool_id != dedicated_tool for run in outside)
-    # Other products keep using the dedicated tool: dedication is a shift in
-    # shares, not a partition of the fab.
-    others = [run for run in timeline.runs
-              if run.tool_id == dedicated_tool
-              and timeline.lot(run.lot_id).product_id != product]
-    assert others
+def test_a_scenario_condition_layers_over_the_standing_policy(make_world):
+    """Where both cover a decision, the experiment's condition is what runs."""
+    standing = {"product": DEDICATED_PRODUCT, "tool": "ETCH-03",
+                "operation_type": "ETCH", "start_day": 0.0, "end_day": 84.0,
+                "share": 0.9}
+    world = make_world(routing={"stickiness": 0.6,
+                                "dedications": [standing]})
+    timeline = dedicated_timeline(world)
+    assert (dedicated_share(timeline, DEDICATED_TOOL, DEDICATED_PRODUCT,
+                            DEDICATION_WINDOW)
+            > dedicated_share(timeline, "ETCH-03", DEDICATED_PRODUCT,
+                              DEDICATION_WINDOW))
 
 
 def test_routing_cannot_see_the_answer(world):

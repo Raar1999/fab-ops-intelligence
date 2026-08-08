@@ -61,7 +61,11 @@ src/fabsim/
 ├── rng.py                 # seed → named deterministic substreams (see §6)
 │                          #                                        [implemented]
 ├── world.py               # static entities: products, flows, steps, recipes,
-│                          #   tools, chambers, operators (from world template)
+│                          #   tools, chambers, operators (from world template),
+│                          #   the measures/covers relations, and the generic
+│                          #   observation/alarm/die-grid contracts  [implemented]
+├── routing.py             # scenario routing conditions resolved against a
+│                          #   world; share-based dedication (ADR-015) [implemented]
 ├── timeline.py            # the event clock: lot release, wafer step progression,
 │                          #   tool/chamber occupancy, maintenance windows
 ├── latent.py              # per-chamber/tool latent state evolution over time
@@ -126,13 +130,29 @@ Implemented in `rng.py`: `stream(master_seed, *key)` returns a fresh `random.Ran
 - **Generator version**: `fabsim.__version__`, semver. Any change that can alter emitted bytes for a fixed (config, seed) bumps at least the minor version. Recorded in manifest and truth.
 - **Schema version**: `2.0` for the Phase 1 observable schema; recorded in the DB's `dataset_meta` table and the manifest. Additive changes bump the minor; breaking changes bump the major.
 - **Truth schema version**: `fabsim.truth/v1`, versioned independently (`GROUND_TRUTH_CONTRACT.md` §5).
-- **Scenario config version**: `fabsim.scenario/v1` header field (spelled `"fabsim": "scenario/v1"` in the file), validated on load; any other value is rejected.
+- **Scenario config version**: `fabsim.scenario/v1` header field (spelled `"fabsim": "scenario/v1"` in the file), validated on load; any other value is rejected. Additive optional fields with empty defaults stay at v1 while no config has been emitted (ADR-015 §4); once configs and datasets exist, any change that could alter an existing config's meaning or identity requires v2.
+- **World template version**: `fabsim.world/v1` header field, plus a content digest `world_sha256` recorded alongside it. The version says which contract the file speaks; the digest says which *world* it is, and both the manifest and the build fingerprint carry it.
 
-The benchmark can therefore state precisely: *result R came from scenario X (config hash), seed Z, fabsim vY, schema 2.0* — the reproducibility requirement of the gate.
+The benchmark can therefore state precisely: *result R came from scenario X (config hash), world W (world hash), seed Z, fabsim vY, schema 2.0* — the reproducibility requirement of the gate.
 
 ## 8. Dependency policy
 
 Generation remains **stdlib-only** (sqlite3, random, math, hashlib, json, datetime, dataclasses). **Config files are JSON** (ADR-014, settled at implementation review): a hand-written YAML subset parser would be a second, weaker JSON with its own bugs, and `json` is already in the standard library and already the format of the manifest and the truth artifact. The design always treated config syntax as cosmetic; this resolves it in favour of the option that adds no code and no dependency. No numpy/scipy/pandas inside `fabsim`. (Numpy-quality Gaussian/Poisson draws are not required; stdlib `random` plus an inverse-transform Poisson is sufficient at this scale.)
+
+## 8.1 Step 3 sequence and gate boundaries
+
+Stage 4 of the pipeline (the physics) is built in ordered slices, each gated on the one before:
+
+| Slice | Builds | Status |
+|---|---|---|
+| **3.0 Contracts** | the declarations the rest consume: `routing_conditions` + share-based dedication (ADR-015), the `measures`/`covers` relations (gate condition F1), the alarm, die-grid and observation configuration, and `world_sha256` in the build fingerprint | **implemented** |
+| 3A Latent plane | per-chamber latent state and its baseline dynamics | not started |
+| 3B Fab response | mechanisms acting on latents; alarms; repair and recovery | not started |
+| 3C Process observation | FDC summaries and metrology values from latents + the variation stack | not started |
+| 3D Defects | intensity, origin, geometry, the noisy classifier | not started |
+| 3E Die + yield | die grid, kill model, bins, wafer yield | not started |
+
+The boundary 3.0 holds is that it declares *machinery* and never behaviour: the alarm block states thresholds and background rates but fires nothing; the die-grid block states geometry but lays out no grid; the observation block states channels, sensitivities and confusion but computes no value. A contract that named an event, a mechanism, a tool or a chamber would have pre-committed the answer before the mechanism layer existed, so none of them has a field for one.
 
 ## 9. What Phase 1 explicitly does NOT build
 
