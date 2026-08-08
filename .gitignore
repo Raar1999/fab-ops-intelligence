@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Note: data/fab.db and data/fab_database.sql are intentionally committed so the
+# repo runs immediately on clone (they are also fully regenerable via `make setup`).

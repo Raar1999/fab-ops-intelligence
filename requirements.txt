@@ -1,0 +1,14 @@
+# Core analysis stack
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+
+# Interactive dashboard
+streamlit>=1.30
+
+# Tests
+pytest>=7.0
+
+# Notebook (to re-execute notebooks/investigation.ipynb)
+jupyter>=1.0
+nbclient>=0.8
