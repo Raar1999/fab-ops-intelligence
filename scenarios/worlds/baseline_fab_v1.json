@@ -396,5 +396,49 @@
     "origin": "wafer_center",
     "index_order": "row_major",
     "partial_die_policy": "exclude"
+  },
+
+  "latents": {
+    "edge_uniformity": {
+      "family": "ar1",
+      "phi": 0.97,
+      "sigma": 0.0025,
+      "severity_reference": 0.0054,
+      "pm_recovery": {"mean": 0.0, "sd": 0.0},
+      "benign_tool_sd": 0.35,
+      "benign_chamber_sd": 0.5
+    },
+
+    "param_bias": {
+      "family": "ar1",
+      "phi": 0.98,
+      "sigma": 0.0040,
+      "severity_reference": 0.0150,
+      "pm_recovery": {"mean": 0.7, "sd": 0.1},
+      "benign_tool_sd": 0.35,
+      "benign_chamber_sd": 0.5
+    },
+
+    "particle_load": {
+      "family": "accumulation",
+      "growth_per_day": 0.0020,
+      "sigma_per_day": 0.0006,
+      "floor": 0.0,
+      "severity_reference": 0.0159,
+      "pm_recovery": {"mean": 1.0, "sd": 0.0},
+      "benign_tool_sd": 0.35,
+      "benign_chamber_sd": 0.5
+    }
+  },
+
+  "mechanisms": {
+    "severity_jitter_sd": 0.08,
+    "profiles": {"intermittent_period_days": 3.0, "intermittent_duty": 0.45},
+    "chamber_edge_uniformity": {},
+    "param_drift": {},
+    "particle_excursion": {"step_fraction": 0.35, "escalation_days": 6.0},
+    "benign_offset": {
+      "magnitudes": {"small": 0.4, "moderate": 0.9, "large": 1.4}
+    }
   }
 }

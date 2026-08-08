@@ -22,14 +22,24 @@ and the stage the physics will later play on:
                     what a share-based dedication means (ADR-015)
 * `fabsim.timeline` the one event clock: lot release, availability-driven
                     routing, chamber occupancy, maintenance, state ribbons
+* `fabsim.mechanisms` the fault/event library: what each mechanism drives, and
+                    the registry that binds a scenario's events to a world
+* `fabsim.latent`   the hidden plane: per-chamber latent state over time, the
+                    benign offsets every chamber carries, and the internal
+                    `Realization` that records what actually happened
 
-Mechanisms, latent state, the observation models, the observable emitters and
-the truth artifact are later slices. Nothing in this package reads or writes a
-dataset yet, and nothing in it yet reads a scenario's `events`: the world and
-the timeline decide where and when things happen, never what a fault does.
-The Step 3 contracts are declarations only — the alarm, die-grid and
-observation blocks say what the machinery *is*, and no code yet fires an
-alarm, lays out a die grid or computes an observation.
+The observation models, the defect and yield models, the observable emitters
+and the truth artifact are later slices. Nothing in this package reads or
+writes a dataset yet.
+
+`fabsim.latent` is the first slice that reads a scenario's `events`, and it is
+the only one that should: everything downstream will read *latent state*, so a
+fault's effect on an observation is mediated by construction rather than by
+discipline (ADR-004). The timeline is still blind to faults — at a fixed seed a
+null scenario and a faulted one over the same world schedule identically — and
+the latent plane produces no observable row, no alarm, no defect and no yield.
+The Step 3.0 alarm, die-grid and observation contracts remain declarations: no
+code yet fires an alarm, lays out a die grid or computes an observation.
 """
 from __future__ import annotations
 
@@ -37,9 +47,13 @@ __all__ = ["SCHEMA_VERSION", "__version__"]
 
 #: Generator version (semver, `FABSIM_DESIGN.md` §7). Any change that can
 #: alter emitted bytes for a fixed (config, seed) bumps at least the minor
-#: version. The version is one of the four inputs of the reproducibility
+#: version. The version is one of the five inputs of the reproducibility
 #: contract, so bumping it changes every dataset's build fingerprint.
-__version__ = "0.1.0"
+#:
+#: 0.2.0 — Step 3A: the latent plane. New generation behaviour and a new
+#: versioned integration grid (`fabsim.latent.LATENT_GRID_MINUTES`), both of
+#: which change what a given (config, seed) realizes.
+__version__ = "0.2.0"
 
 #: Observable schema version, recorded in `dataset_meta` and the manifest.
 #: The schema v2 DDL is a later Phase 1 slice; the constant exists now because

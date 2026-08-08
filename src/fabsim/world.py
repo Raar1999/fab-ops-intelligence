@@ -60,6 +60,7 @@ never in an order that could depend on which entity a scenario later targets
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -77,6 +78,9 @@ __all__ = [
     "HEADER_KEY",
     "HEADER_VALUE",
     "INSPECTION_OPERATION",
+    "LATENT_FAMILIES",
+    "MAGNITUDE_LEVELS",
+    "MECHANISM_DEFAULT_KEYS",
     "METROLOGY_OPERATION",
     "MINUTES_PER_DAY",
     "PARTIAL_DIE_POLICIES",
@@ -93,8 +97,10 @@ __all__ = [
     "DieGridPolicy",
     "HourRange",
     "FlowStep",
+    "LatentDynamics",
     "LotReleasePolicy",
     "MaintenancePolicy",
+    "MechanismPolicy",
     "MinuteDistribution",
     "ObservationChannel",
     "ObservationPolicy",
@@ -176,6 +182,31 @@ ALARM_SOURCES = ("channel", "latent")
 #: `test_severity_vocabularies_agree` holds the two copies together.
 SEVERITY_LEVELS = ("subtle", "moderate", "obvious")
 
+#: Distractor magnitudes, mirroring `fabsim.scenario.MAGNITUDES` for the same
+#: reason and held together by `test_magnitude_vocabularies_agree`.
+MAGNITUDE_LEVELS = ("small", "moderate", "large")
+
+#: How a latent evolves when nothing is driving it
+#: (`CAUSAL_MECHANISM_MODEL.md` §1). `ar1` wanders around a level it reverts
+#: to; `accumulation` climbs between cleans. The families differ in what a PM
+#: means to them, which is why the distinction is a declared vocabulary rather
+#: than an implementation detail.
+LATENT_FAMILIES = ("ar1", "accumulation")
+
+#: Mechanisms whose constants a world template must supply, mirroring
+#: `fabsim.mechanisms.MECHANISM_NAMES`. Mirrored rather than imported because
+#: the mechanism library imports this module; `test_mechanism_vocabularies_agree`
+#: holds the copies together, and requiring an entry for *every* registered
+#: mechanism means adding one to the library forces the template to answer for
+#: it rather than silently inheriting a default from code.
+_MECHANISM_DEFAULT_SCHEMA: dict[str, tuple[str, ...]] = {
+    "benign_offset": ("magnitudes",),
+    "chamber_edge_uniformity": (),
+    "param_drift": (),
+    "particle_excursion": ("step_fraction", "escalation_days"),
+}
+MECHANISM_DEFAULT_KEYS = tuple(sorted(_MECHANISM_DEFAULT_SCHEMA))
+
 #: Die-grid coordinate conventions. Closed one-member vocabularies today: the
 #: point is that the convention is *stated and versioned*, so the later yield
 #: model derives die coordinates from declared geometry rather than from an
@@ -188,7 +219,7 @@ _TEMPLATE_REQUIRED = (HEADER_KEY, "name", "time_origin", "wafers_per_lot",
                       "operation_types", "layers", "products", "process_steps",
                       "process_flows", "tools", "operators", "routing",
                       "lot_release", "queue", "maintenance", "observation",
-                      "alarms", "die_grid")
+                      "alarms", "die_grid", "latents", "mechanisms")
 _TEMPLATE_OPTIONAL = ("description", "recipes")
 _TEMPLATE_KEYS = _TEMPLATE_REQUIRED + _TEMPLATE_OPTIONAL
 
@@ -238,6 +269,17 @@ _DIE_GRID_REQUIRED = ("edge_exclusion_mm", "street_width_mm",
                       "die_aspect_ratio")
 _DIE_GRID_OPTIONAL = ("origin", "index_order", "partial_die_policy")
 _DIE_GRID_KEYS = _DIE_GRID_REQUIRED + _DIE_GRID_OPTIONAL
+
+_LATENT_COMMON = ("family", "severity_reference", "pm_recovery",
+                  "benign_tool_sd", "benign_chamber_sd")
+_LATENT_FAMILY_KEYS = {
+    "ar1": ("phi", "sigma"),
+    "accumulation": ("growth_per_day", "sigma_per_day", "floor"),
+}
+_PM_RECOVERY_KEYS = ("mean", "sd")
+
+_MECHANISMS_GLOBAL = ("severity_jitter_sd", "profiles")
+_PROFILE_DEFAULT_KEYS = ("intermittent_period_days", "intermittent_duty")
 
 #: Names that are code-level identifiers (template and flow names) versus names
 #: that are shop-floor vocabulary (``ETCH-02``, ``B``, ``OP-101``).
@@ -778,6 +820,85 @@ class AlarmPolicy:
 
 
 @dataclass(frozen=True)
+class LatentDynamics:
+    """How one latent behaves when nothing is driving it, and what a PM means
+    to it (`CAUSAL_MECHANISM_MODEL.md` §1 and §6).
+
+    These constants define the *null* world: the wander of a healthy chamber,
+    the sawtooth every chamber shows between cleans, and the spread of the
+    permanent offsets chambers carry. A mechanism can only move a latent
+    relative to this baseline, and `severity_reference` is the yardstick it is
+    moved in — which is what keeps severity calibrated against background
+    physics rather than against an outcome someone wanted.
+    """
+
+    name: str
+    family: str
+
+    #: `ar1` only: per-grid-step retention and innovation. φ is stated per
+    #: grid step, so changing the latent grid changes the process and is a
+    #: versioned decision, not a tuning knob.
+    phi: float | None
+    sigma: float | None
+
+    #: `accumulation` only: mean climb per day, day-scaled noise, and the
+    #: physical floor a load cannot go below.
+    growth_per_day: float | None
+    sigma_per_day: float | None
+    floor: float | None
+
+    #: σ of the weekly-mean latent on a *healthy* chamber. Severity is quoted
+    #: in multiples of this (`CAUSAL_MECHANISM_MODEL.md` §8), and
+    #: `test_the_declared_severity_reference_matches_the_null_world` checks the
+    #: declared number against what the null realization actually does.
+    severity_reference: float
+
+    #: Fraction of the current departure a PM removes, drawn per PM. Mean 1
+    #: is a full clean, 0.7 a partial recentre, 0 means a PM does not touch
+    #: this latent at all — hardware is not fixed by cleaning.
+    pm_recovery_mean: float
+    pm_recovery_sd: float
+
+    #: Spread of the permanent benign offsets, in units of
+    #: `severity_reference`. Every tool and every chamber gets one; the
+    #: magnitudes overlap the subtle-severity band on purpose (rule F11).
+    benign_tool_sd: float
+    benign_chamber_sd: float
+
+    def pm_resets(self) -> bool:
+        """Whether a PM moves this latent at all."""
+        return self.pm_recovery_mean > 0.0 or self.pm_recovery_sd > 0.0
+
+
+@dataclass(frozen=True)
+class MechanismPolicy:
+    """The world's constants for the mechanism library (rule D6, risk R6).
+
+    Every number a mechanism acts with lives here rather than in its module,
+    so tuning a mechanism is a template edit that the world digest records —
+    and so no constant can quietly come to exist because of one demo.
+    """
+
+    #: Spread of the per-activation realized-magnitude jitter. Severity is a
+    #: target, not a guarantee; two activations at the same severity differ.
+    severity_jitter_sd: float
+    intermittent_period_days: float
+    intermittent_duty: float
+    #: mechanism name → its constants. Held as a plain nested mapping because
+    #: the shapes are per-mechanism; `defaults_for` hands out copies.
+    defaults: Mapping[str, Mapping[str, Any]] = field(repr=False)
+
+    def defaults_for(self, name: str) -> dict[str, Any]:
+        """A fresh copy of one mechanism's constants."""
+        return copy.deepcopy(dict(self.defaults[name]))
+
+    def profile_defaults(self) -> dict[str, float]:
+        """Constants shared by every profile shape."""
+        return {"intermittent_period_days": self.intermittent_period_days,
+                "intermittent_duty": self.intermittent_duty}
+
+
+@dataclass(frozen=True)
 class DieGridPolicy:
     """Physical die geometry: enough to derive a die grid, and nothing else.
 
@@ -847,6 +968,8 @@ class World:
     observation: ObservationPolicy
     alarms: AlarmPolicy
     die_grid: DieGridPolicy
+    latent_dynamics: tuple[LatentDynamics, ...]
+    mechanism_policy: MechanismPolicy
     #: SHA-256 of the template's semantic content — one of the inputs of the
     #: dataset build fingerprint (`SCENARIO_SPECIFICATION.md` §5). A world is
     #: as much an input to a dataset as its scenario is, so a dataset built
@@ -918,6 +1041,8 @@ class World:
                                 if step.step_id in s.covers_step_ids)
             for step in self.process_steps
         }
+        self._index["latent_by_name"] = {d.name: d
+                                         for d in self.latent_dynamics}
         self._index["channel_by_name"] = {c.name: c
                                           for c in self.observation.channels}
         self._index["channels_for_operation"] = {
@@ -1014,6 +1139,11 @@ class World:
     def inspection_steps_for(self, step_id: int) -> tuple[ProcessStep, ...]:
         """Inspection steps that cover `step_id`, in step-id order."""
         return self._index["inspections_for"][step_id]
+
+    # -- the latent plane's configuration ---------------------------------
+    def latent(self, name: str) -> LatentDynamics:
+        """Baseline dynamics of one declared latent."""
+        return self._index["latent_by_name"][name]
 
     # -- observation configuration ----------------------------------------
     def channel(self, name: str) -> ObservationChannel:
@@ -1963,6 +2093,163 @@ def _build_alarms(raw: Any, operations: Sequence[str], tools: Sequence[Tool],
     )
 
 
+def _build_latents(raw: Any, latents: Sequence[str]
+                   ) -> tuple[LatentDynamics, ...]:
+    """The baseline dynamics of every declared latent.
+
+    Must cover the observation plane's latent vocabulary exactly — no latent a
+    channel can respond to without dynamics, and no dynamics for a latent
+    nothing can observe. The two lists are separate because they answer
+    different questions ("what can a channel respond to?" versus "how does it
+    evolve?"), and demanding set equality is what stops them drifting apart.
+    """
+    obj = _as_object(raw, "latents")
+    declared = set(latents)
+    stated = set(obj)
+    missing = sorted(declared - stated)
+    if missing:
+        raise WorldTemplateError(
+            "no dynamics for declared latent(s) " + ", ".join(missing)
+            + "; a latent a channel can respond to must know how to evolve",
+            "latents")
+    extra = sorted(stated - declared)
+    if extra:
+        raise WorldTemplateError(
+            "dynamics for undeclared latent(s) " + ", ".join(extra)
+            + "; `observation.latents` is the vocabulary", "latents")
+
+    built: list[LatentDynamics] = []
+    for name in latents:
+        path = f"latents.{name}"
+        entry = _as_object(obj[name], path)
+        family = _as_choice(_require(entry, "family", path),
+                            _at(path, "family"), LATENT_FAMILIES)
+        _reject_unknown(entry, _LATENT_COMMON + _LATENT_FAMILY_KEYS[family],
+                        path)
+
+        recovery_path = _at(path, "pm_recovery")
+        recovery = _as_object(_require(entry, "pm_recovery", path),
+                              recovery_path)
+        _reject_unknown(recovery, _PM_RECOVERY_KEYS, recovery_path)
+
+        phi = sigma = growth = step_sigma = floor = None
+        if family == "ar1":
+            # φ = 1 would be a random walk with no level to revert to, and
+            # "wander" would become "drift" on every healthy chamber.
+            phi = _as_number(_require(entry, "phi", path), _at(path, "phi"),
+                             minimum=0.0, less_than=1.0)
+            sigma = _as_number(_require(entry, "sigma", path),
+                               _at(path, "sigma"), greater_than=0.0)
+        else:
+            growth = _as_number(_require(entry, "growth_per_day", path),
+                                _at(path, "growth_per_day"), greater_than=0.0)
+            step_sigma = _as_number(_require(entry, "sigma_per_day", path),
+                                    _at(path, "sigma_per_day"), minimum=0.0)
+            floor = _as_number(_require(entry, "floor", path),
+                               _at(path, "floor"))
+
+        built.append(LatentDynamics(
+            name=name,
+            family=family,
+            phi=phi,
+            sigma=sigma,
+            growth_per_day=growth,
+            sigma_per_day=step_sigma,
+            floor=floor,
+            severity_reference=_as_number(
+                _require(entry, "severity_reference", path),
+                _at(path, "severity_reference"), greater_than=0.0),
+            pm_recovery_mean=_as_number(
+                _require(recovery, "mean", recovery_path),
+                _at(recovery_path, "mean"), minimum=0.0, maximum=1.0),
+            pm_recovery_sd=_as_number(_require(recovery, "sd", recovery_path),
+                                      _at(recovery_path, "sd"), minimum=0.0),
+            benign_tool_sd=_as_number(
+                _require(entry, "benign_tool_sd", path),
+                _at(path, "benign_tool_sd"), greater_than=0.0),
+            benign_chamber_sd=_as_number(
+                _require(entry, "benign_chamber_sd", path),
+                _at(path, "benign_chamber_sd"), greater_than=0.0),
+        ))
+    return tuple(built)
+
+
+def _build_mechanism_defaults(raw: Any, name: str,
+                              required: Sequence[str]) -> dict[str, Any]:
+    path = f"mechanisms.{name}"
+    entry = _as_object(raw, path)
+    _reject_unknown(entry, required, path)
+    defaults: dict[str, Any] = {}
+    for key in required:
+        value = _require(entry, key, path)
+        if key == "magnitudes":
+            magnitude_path = _at(path, key)
+            magnitudes = _as_object(value, magnitude_path)
+            _reject_unknown(magnitudes, MAGNITUDE_LEVELS, magnitude_path)
+            scaled = {
+                level: _as_number(_require(magnitudes, level, magnitude_path),
+                                  _at(magnitude_path, level),
+                                  greater_than=0.0)
+                for level in MAGNITUDE_LEVELS
+            }
+            ordered = [scaled[level] for level in MAGNITUDE_LEVELS]
+            if sorted(ordered) != ordered or len(set(ordered)) != len(ordered):
+                raise WorldTemplateError(
+                    "magnitude must increase strictly from "
+                    + " to ".join(MAGNITUDE_LEVELS) + f", got {ordered}",
+                    magnitude_path)
+            defaults[key] = scaled
+        elif key == "step_fraction":
+            defaults[key] = _as_number(value, _at(path, key), minimum=0.0,
+                                       less_than=1.0)
+        else:
+            defaults[key] = _as_number(value, _at(path, key),
+                                       greater_than=0.0)
+    return defaults
+
+
+def _build_mechanisms(raw: Any) -> MechanismPolicy:
+    """Constants for the mechanism library, one entry per registered mechanism.
+
+    Nothing here describes *where* a mechanism acts or *what* it produces:
+    those are the scenario's business and the mechanism's own arithmetic. This
+    block holds only the numbers, which is what keeps a magic constant from
+    ever coming to exist because of one particular demo (risk R6).
+    """
+    obj = _as_object(raw, "mechanisms")
+    _reject_unknown(obj, _MECHANISMS_GLOBAL + MECHANISM_DEFAULT_KEYS,
+                    "mechanisms")
+
+    profile_path = "mechanisms.profiles"
+    profiles = _as_object(_require(obj, "profiles", "mechanisms"),
+                          profile_path)
+    _reject_unknown(profiles, _PROFILE_DEFAULT_KEYS, profile_path)
+
+    defaults: dict[str, dict[str, Any]] = {}
+    for name in MECHANISM_DEFAULT_KEYS:
+        if name not in obj:
+            raise WorldTemplateError(
+                f"no constants for mechanism {name!r}; every mechanism in the "
+                "library must be answered for by the world, even with an "
+                "empty object", "mechanisms")
+        defaults[name] = _build_mechanism_defaults(
+            obj[name], name, _MECHANISM_DEFAULT_SCHEMA[name])
+
+    return MechanismPolicy(
+        severity_jitter_sd=_as_number(
+            _require(obj, "severity_jitter_sd", "mechanisms"),
+            "mechanisms.severity_jitter_sd", minimum=0.0),
+        intermittent_period_days=_as_number(
+            _require(profiles, "intermittent_period_days", profile_path),
+            _at(profile_path, "intermittent_period_days"), greater_than=0.0),
+        intermittent_duty=_as_number(
+            _require(profiles, "intermittent_duty", profile_path),
+            _at(profile_path, "intermittent_duty"), greater_than=0.0,
+            less_than=1.0),
+        defaults=defaults,
+    )
+
+
 def _build_die_grid(raw: Any, products: Sequence[Product]) -> DieGridPolicy:
     """Physical die geometry, validated against the products it must fit."""
     obj = _as_object(raw, "die_grid")
@@ -2162,5 +2449,8 @@ def build_world(raw: Mapping[str, Any]) -> World:
         alarms=_build_alarms(_require(obj, "alarms", ""), operations, tools,
                              observation),
         die_grid=_build_die_grid(_require(obj, "die_grid", ""), products),
+        latent_dynamics=_build_latents(_require(obj, "latents", ""),
+                                       observation.latents),
+        mechanism_policy=_build_mechanisms(_require(obj, "mechanisms", "")),
         world_sha256=world_sha256(obj),
     )

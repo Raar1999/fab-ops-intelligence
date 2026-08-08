@@ -68,13 +68,16 @@ src/fabsim/
 │                          #   world; share-based dedication (ADR-015) [implemented]
 ├── timeline.py            # the event clock: lot release, wafer step progression,
 │                          #   tool/chamber occupancy, maintenance windows
-├── latent.py              # per-chamber/tool latent state evolution over time
-├── mechanisms/            # fault/event library (each: latent target + sensitivities)
-│   ├── base.py            #   Mechanism interface: apply(latent_state, t) + truth record
+├── latent.py              # per-chamber latent state evolution over time, the
+│                          #   benign offsets, and the internal Realization
+│                          #                                        [implemented]
+├── mechanisms/            # fault/event library (each: latent target + drive)
+│   ├── base.py            #   Mechanism interface: contribute(context) + registry
 │   ├── edge_uniformity.py #   M1 chamber edge non-uniformity (equipment fault)
 │   ├── param_drift.py     #   M2 slow setpoint-delivery drift (process drift)
 │   ├── particle_load.py   #   M3 between-PM particle accumulation (baseline + recovery)
 │   └── benign_offset.py   #   M4 permanent harmless tool/chamber offset (distractor)
+│                          #                                        [implemented]
 ├── models/
 │   ├── parameters.py      # observation model: FDC summaries + metrology values
 │   ├── defects.py         # Poisson counts, spatial components, classifier channel
@@ -146,13 +149,15 @@ Stage 4 of the pipeline (the physics) is built in ordered slices, each gated on 
 | Slice | Builds | Status |
 |---|---|---|
 | **3.0 Contracts** | the declarations the rest consume: `routing_conditions` + share-based dedication (ADR-015), the `measures`/`covers` relations (gate condition F1), the alarm, die-grid and observation configuration, and `world_sha256` in the build fingerprint | **implemented** |
-| 3A Latent plane | per-chamber latent state and its baseline dynamics | not started |
+| **3A Latent plane** | per-chamber latent state on a versioned 60-minute grid, its baseline dynamics and benign offsets, the four-mechanism library, PM reset semantics, and the internal `Realization` (ADR-016) | **implemented** |
 | 3B Fab response | mechanisms acting on latents; alarms; repair and recovery | not started |
 | 3C Process observation | FDC summaries and metrology values from latents + the variation stack | not started |
 | 3D Defects | intensity, origin, geometry, the noisy classifier | not started |
 | 3E Die + yield | die grid, kill model, bins, wafer yield | not started |
 
 The boundary 3.0 holds is that it declares *machinery* and never behaviour: the alarm block states thresholds and background rates but fires nothing; the die-grid block states geometry but lays out no grid; the observation block states channels, sensitivities and confusion but computes no value. A contract that named an event, a mechanism, a tool or a chamber would have pre-committed the answer before the mechanism layer existed, so none of them has a field for one.
+
+The boundary 3A holds is that its only output is **hidden physical state**. A mechanism raises a latent; nothing in the slice can raise a defect, fire an alarm, write a measurement or kill a die, because none of those concepts is reachable from it — `test_the_latent_plane_names_no_observable` and `test_the_latent_plane_imports_nothing_observable` check that structurally rather than by review. The `Realization` it produces is in-memory only: there is no path on disk, no registry and no singleton, so a later observable projection can only be *given* it, never find it (`GROUND_TRUTH_CONTRACT.md` §4). Truth emission remains a later gate.
 
 ## 9. What Phase 1 explicitly does NOT build
 

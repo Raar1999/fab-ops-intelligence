@@ -21,6 +21,9 @@ import pytest
 from fabsim.world import (
     CHANNEL_KINDS,
     CONTRACT,
+    LATENT_FAMILIES,
+    MAGNITUDE_LEVELS,
+    MECHANISM_DEFAULT_KEYS,
     MINUTES_PER_DAY,
     SEVERITY_LEVELS,
     SHIFTS,
@@ -984,6 +987,182 @@ def test_rejects_a_confusion_row_naming_an_undeclared_class(make_template):
         build_world(raw)
 
 
+# ------------------------------------------------------- latent dynamics (3A)
+
+
+def test_the_baseline_declares_dynamics_for_every_latent(world):
+    assert {d.name for d in world.latent_dynamics} == set(
+        world.observation.latents)
+    for dynamics in world.latent_dynamics:
+        assert dynamics.family in LATENT_FAMILIES
+        assert dynamics.severity_reference > 0.0
+        assert dynamics.benign_tool_sd > 0.0
+        assert dynamics.benign_chamber_sd > 0.0
+
+
+def test_the_baseline_dynamics_match_the_design_table(world):
+    """`CAUSAL_MECHANISM_MODEL.md` §1 and §6, as constants."""
+    edge = world.latent("edge_uniformity")
+    assert edge.family == "ar1"
+    assert not edge.pm_resets()          # hardware, not cleaning
+
+    param = world.latent("param_bias")
+    assert param.family == "ar1"
+    assert param.phi == pytest.approx(0.98)
+    assert (param.pm_recovery_mean, param.pm_recovery_sd) == (0.7, 0.1)
+
+    particle = world.latent("particle_load")
+    assert particle.family == "accumulation"
+    assert particle.growth_per_day > 0.0
+    assert particle.pm_recovery_mean == 1.0
+
+
+def test_rejects_dynamics_that_do_not_cover_the_latent_vocabulary(
+        make_template):
+    raw = make_template()
+    del raw["latents"]["param_bias"]
+    with pytest.raises(WorldTemplateError, match="no dynamics for declared"):
+        build_world(raw)
+
+
+def test_rejects_dynamics_for_a_latent_nothing_can_observe(make_template):
+    raw = make_template()
+    raw["latents"]["thermal_bow"] = dict(raw["latents"]["param_bias"])
+    with pytest.raises(WorldTemplateError, match="undeclared latent"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"phi": 1.0}, "latents.param_bias.phi"),
+    ({"phi": -0.1}, "latents.param_bias.phi"),
+    ({"phi": "0.98"}, "latents.param_bias.phi"),
+    ({"sigma": 0.0}, "latents.param_bias.sigma"),
+    ({"severity_reference": 0.0}, "latents.param_bias.severity_reference"),
+    ({"benign_tool_sd": 0.0}, "latents.param_bias.benign_tool_sd"),
+    ({"family": "brownian"}, "latents.param_bias.family"),
+    ({"growth_per_day": 1.0}, "latents.param_bias"),
+    ({"half_life_days": 3.0}, "latents.param_bias"),
+])
+def test_rejects_invalid_wander_dynamics(make_template, overrides, path):
+    raw = make_template()
+    raw["latents"]["param_bias"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"growth_per_day": 0.0}, "latents.particle_load.growth_per_day"),
+    ({"sigma_per_day": -1.0}, "latents.particle_load.sigma_per_day"),
+    ({"phi": 0.9}, "latents.particle_load"),
+])
+def test_rejects_invalid_accumulation_dynamics(make_template, overrides, path):
+    raw = make_template()
+    raw["latents"]["particle_load"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("recovery, path", [
+    ({"mean": 1.5}, "latents.param_bias.pm_recovery.mean"),
+    ({"mean": -0.1}, "latents.param_bias.pm_recovery.mean"),
+    ({"sd": -0.1}, "latents.param_bias.pm_recovery.sd"),
+    ({"beta": 2.0}, "latents.param_bias.pm_recovery"),
+])
+def test_rejects_an_invalid_pm_recovery(make_template, recovery, path):
+    raw = make_template()
+    raw["latents"]["param_bias"]["pm_recovery"].update(recovery)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+# --------------------------------------------------- mechanism constants (3A)
+
+
+def test_the_baseline_answers_for_every_mechanism(world):
+    policy = world.mechanism_policy
+    assert policy.severity_jitter_sd > 0.0
+    assert 0.0 < policy.intermittent_duty < 1.0
+    assert policy.intermittent_period_days > 0.0
+    for name in MECHANISM_DEFAULT_KEYS:
+        assert isinstance(policy.defaults_for(name), dict)
+    assert set(policy.defaults_for("particle_excursion")) == {
+        "step_fraction", "escalation_days"}
+    assert set(policy.defaults_for("benign_offset")["magnitudes"]) == set(
+        MAGNITUDE_LEVELS)
+
+
+def test_mechanism_defaults_are_handed_out_as_copies(world):
+    first = world.mechanism_policy.defaults_for("particle_excursion")
+    first["step_fraction"] = 99.0
+    assert (world.mechanism_policy.defaults_for("particle_excursion")
+            ["step_fraction"] != 99.0)
+
+
+def test_magnitude_vocabularies_agree():
+    from fabsim.scenario import MAGNITUDES
+
+    assert MAGNITUDE_LEVELS == MAGNITUDES
+
+
+def test_rejects_a_world_that_ignores_a_registered_mechanism(make_template):
+    raw = make_template()
+    del raw["mechanisms"]["param_drift"]
+    with pytest.raises(WorldTemplateError, match="no constants for mechanism"):
+        build_world(raw)
+
+
+def test_rejects_constants_for_a_mechanism_that_does_not_exist(make_template):
+    raw = make_template()
+    raw["mechanisms"]["chamber_meltdown"] = {}
+    with pytest.raises(WorldTemplateError, match="unknown field"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"step_fraction": 1.0}, "mechanisms.particle_excursion.step_fraction"),
+    ({"step_fraction": -0.1}, "mechanisms.particle_excursion.step_fraction"),
+    ({"escalation_days": 0.0},
+     "mechanisms.particle_excursion.escalation_days"),
+    ({"decay_days": 2.0}, "mechanisms.particle_excursion"),
+])
+def test_rejects_invalid_particle_constants(make_template, overrides, path):
+    raw = make_template()
+    raw["mechanisms"]["particle_excursion"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_distractor_magnitudes_that_are_not_an_axis(make_template):
+    raw = make_template()
+    raw["mechanisms"]["benign_offset"]["magnitudes"] = {
+        "small": 1.4, "moderate": 0.9, "large": 0.4}
+    with pytest.raises(WorldTemplateError, match="increase strictly"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"severity_jitter_sd": -0.1}, "mechanisms.severity_jitter_sd"),
+    ({"profiles": {"intermittent_period_days": 3.0,
+                   "intermittent_duty": 1.0}},
+     "mechanisms.profiles.intermittent_duty"),
+    ({"profiles": {"intermittent_period_days": 0.0,
+                   "intermittent_duty": 0.45}},
+     "mechanisms.profiles.intermittent_period_days"),
+    ({"profiles": {"intermittent_duty": 0.45}},
+     "mechanisms.profiles.intermittent_period_days"),
+])
+def test_rejects_invalid_mechanism_globals(make_template, overrides, path):
+    raw = make_template()
+    raw["mechanisms"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
 # --------------------------------------------------------- world identity
 
 
@@ -1007,6 +1186,10 @@ def test_the_same_world_hashes_the_same_way(template):
         scale=0.4), id="channel-scale"),
     pytest.param(lambda raw: raw["observation"]["variation_stack"].update(
         run_noise=1.1), id="variation-stack"),
+    pytest.param(lambda raw: raw["latents"]["param_bias"].update(phi=0.97),
+                 id="latent-dynamics"),
+    pytest.param(lambda raw: raw["mechanisms"]["particle_excursion"].update(
+        escalation_days=5.0), id="mechanism-constants"),
 ])
 def test_a_semantic_change_changes_the_world_hash(template, mutate):
     """Anything that can move emitted data must move the identity with it."""
@@ -1146,6 +1329,18 @@ def _code_strings(module: Path) -> list[str]:
             and isinstance(node.value, str) and id(node) not in docstrings]
 
 
+def _fabsim_modules() -> list[Path]:
+    """Every module of the package, subpackages included.
+
+    `rglob`, not `glob`: `mechanisms/` is where entity-specific logic would be
+    most tempting and least visible, so it is exactly what these two rules
+    must reach.
+    """
+    source = Path(__file__).resolve().parents[2] / "src" / "fabsim"
+    return sorted(p for p in source.rglob("*.py")
+                  if "__pycache__" not in p.parts)
+
+
 def test_no_code_constant_is_keyed_to_a_named_tool_or_chamber():
     """Rule D6: behaviour may never be keyed by a specific entity name.
 
@@ -1153,9 +1348,10 @@ def test_no_code_constant_is_keyed_to_a_named_tool_or_chamber():
     in a constant is how a generator quietly learns its own answer. Docstrings
     and comments are excluded; string literals in code are not.
     """
-    source = Path(__file__).resolve().parents[2] / "src" / "fabsim"
     pattern = re.compile(r"(ETCH|CVD|LITHO|CMP|PVD|FURN|IMP|MET|INSP|TEST)-\d")
-    for module in sorted(source.glob("*.py")):
+    modules = _fabsim_modules()
+    assert any(m.parent.name == "mechanisms" for m in modules)
+    for module in modules:
         hits = [text for text in _code_strings(module) if pattern.search(text)]
         assert hits == [], module
 
@@ -1164,8 +1360,7 @@ def test_fabsim_never_imports_fabops():
     """ADR-013: fabsim writes datasets, fabops reads them; neither imports."""
     import ast
 
-    source = Path(__file__).resolve().parents[2] / "src" / "fabsim"
-    for module in sorted(source.glob("*.py")):
+    for module in _fabsim_modules():
         tree = ast.parse(module.read_text(encoding="utf-8"))
         imported: list[str] = []
         for node in ast.walk(tree):
@@ -1175,3 +1370,28 @@ def test_fabsim_never_imports_fabops():
                 imported.append(node.module)
         assert not [name for name in imported
                     if name == "fabops" or name.startswith("fabops.")], module
+
+
+def test_fabops_never_imports_fabsim():
+    """The other direction of ADR-013, and leakage test L9: the analytical
+    plane may not reach the generator, its scenarios or its truth."""
+    import ast
+
+    repository = Path(__file__).resolve().parents[2]
+    forbidden_text = ("scenarios/", "truth.json", "truth/")
+    for root in ("src/fabops", "app"):
+        for module in sorted((repository / root).rglob("*.py")):
+            if "__pycache__" in module.parts:
+                continue
+            source = module.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            imported: list[str] = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imported += [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imported.append(node.module)
+            assert not [n for n in imported
+                        if n == "fabsim" or n.startswith("fabsim.")], module
+            for token in forbidden_text:
+                assert token not in source, (module, token)

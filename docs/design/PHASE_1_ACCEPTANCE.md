@@ -26,11 +26,18 @@ Three seeds of `chamber_edge_uniformity`: affected-wafer sets differ pairwise (J
 ### A3 — No-fault validity
 The null dataset passes the full integrity suite; leakage tests L7 (null blindness) and L10 pass; no latent departs its baseline band; benign distractors present at configured magnitudes (verified against truth's distractor list).
 
+*As implemented (Step 3A), the latent half of this criterion is met and tested:* in a null realization every trajectory equals its mechanism-free counterfactual exactly; every chamber carries every latent with the declared dynamics (F10); every chamber carries a permanent benign offset on every latent whether or not a distractor was declared (F11); and each latent's realized within-chamber weekly σ sits within ±30% of the `severity_reference` the world declares, across seeds. The dataset-level half waits for the emitters.
+
 ### A4 — Structural integrity (generator self-tests, every build)
 All invariants of `SCHEMA_V2_DESIGN.md` §4 and `TEMPORAL_MODEL.md` §6: FK closure, run/step time ordering, zero runs during DOWN/PM, inspection/metrology/test time ordering, reconciliation (defect counts, die-bin sums, state-ribbon tiling), vocabulary closure.
 
 ### A5 — Temporal validity
 For each fault scenario: truth `onset` lies strictly inside the horizon with ≥ 30% baseline period before it; affected-cohort series (metrology → defects → yield) depart baseline in causal order; scenario I additionally shows repair time < recovery, with residual ≈ configured (1 − recovery_fraction).
+
+*As implemented (Step 3A), the latent precondition holds:* a mechanism's trajectory is **bit-identical** to its counterfactual before the onset grid point and departs after it; a `ramp` profile climbs monotonically over its `ramp_days` and then sustains; an `edge_uniformity` activation runs through every PM in the window untouched, while a `param_bias` one is partly recentred by each. The observable ordering (metrology → defects → yield) waits for 3C–3E.
+
+### A5.1 — Severity is an axis, measured against the null *(Step 3A)*
+Severity is calibrated in σ of the **null latent distribution** and against nothing downstream — no yield, no defect count, no diagnostic score (ADR-016 §4). For every mechanism, `subtle < moderate < obvious` in measured σ. For the `ar1` latents the realized weekly shift lands within ±25% of the §8 ladder (1.5 / 3 / 6). For the `accumulation` latent the realized shift **exceeds** the nominal, because an unattended load climbs until something cleans it; severity there sets the escalation rate, and the over-run is what scenario I's repair (3B) exists to stop.
 
 ### A6 — Causal plausibility (reference recovery — leakage test L11)
 Reference SQL (fixtures in `eval/`, not part of fabops) recovers each scenario's intended evidence at moderate severity: B/G chamber-grain yield split + edge-zone defect elevation + edge-CD shift, all temporally aligned with the window; C CD trend detectable before material yield movement; I before/after-maintenance defect-rate contrast. At subtle severity the same queries sit near the natural-variation floor (difficulty axis exists).
@@ -51,6 +58,8 @@ On every dataset: ≥ 2 chambers per multi-chamber tool actually used; per-chamb
 
 ### A10 — Benchmark separation
 L9 code-plane lint green; fabops/app/notebooks contain no fabsim import and no truth/scenario path references; truth files valid against `fabsim.truth/v1`; dataset directories contain observable artifacts + `truth/` only, with manifests free of scenario names.
+
+*As implemented (Step 3A):* the code-plane lint runs in both directions and over subpackages — `src/fabsim/**` imports no `fabops`, and `src/fabops/**` and `app/**` import no `fabsim` and mention no `scenarios/`, `truth/` or `truth.json`. The hidden `Realization` is in-memory only: no path, no registry, no singleton, so an observable projection can only be handed it. No truth file and no dataset directory exists yet.
 
 ### A11 — Backward compatibility
 The legacy surfaces are untouched: `data/generate_fab_db.py` byte-identical, legacy `data/fab.db`/`fab_database.sql` unchanged, all 27 existing tests green, dashboard and notebook run exactly as at Phase 0 close. New code lives only in `src/fabsim/`, `scenarios/`, `eval/` (fixtures), and new tests.

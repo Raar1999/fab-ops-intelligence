@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from fabsim.latent import Realization, realize
 from fabsim.timeline import Timeline, simulate
 from fabsim.world import World, build_world, load_world, load_world_template
 
@@ -58,3 +59,13 @@ def timeline(world: World) -> Timeline:
     """One realization of the baseline world — the reference realization."""
     return simulate(world, lots=BASELINE_LOTS,
                     horizon_days=BASELINE_HORIZON_DAYS, seed=BASELINE_SEED)
+
+
+@pytest.fixture(scope="session")
+def realization(timeline: Timeline) -> Realization:
+    """The **null** latent plane of the reference realization.
+
+    No events and no distractors: the baseline every fault scenario is a
+    departure from, and the world requirement F10 is asserted against.
+    """
+    return realize(timeline)

@@ -25,7 +25,7 @@
 - **D3 (T4):** every mapping in the chain is a probability distribution with configured overlap: defect origin → geometry has jitter and mixture overlap; origin → classified type passes a confusion matrix (5–15%); kill cause → tester bin has 20% cross-assignment; alarms fire probabilistically.
 - **D4 (T5):** severity calibration in σ-units of aggregate statistics (§8 of the mechanism model) keeps per-wafer distributions overlapping; routing independence at the two etch steps removes structural collinearity; the confounded scenario deliberately *adds* imperfect correlation the engine must untangle — correlation is allowed, perfection is not. This is why a dedication is a `share` and never a filter, and why it is tool-level and never chamber-level (ADR-015): a filter would make product and chamber exposure the *same* variable inside the window, which is perfect separation by construction, and a chamber-scoped dedication would aim the confounder at the exact grain the fault is attributed at.
 - **D5 (T6):** opaque `dataset_id`s; scenario names/descriptions excluded from the id hash and absent from all observable artifacts; entity IDs assigned in world-template order, never fault-ordered; the faulty entity's identity varies across the scenario library (not always tool 4, not always etch).
-- **D6 (T7):** all constants live in the world template or mechanism defaults parameterized by (step, product, operation type) — never keyed by a specific tool/chamber name. Grep-able rule: no tool/chamber literal may appear in `models/` or `mechanisms/` code.
+- **D6 (T7):** all constants live in the world template or mechanism defaults parameterized by (step, product, operation type) — never keyed by a specific tool/chamber name. Grep-able rule: no tool/chamber literal may appear in `models/` or `mechanisms/` code. As implemented (Step 3A) the rule is stronger than grep-able: a mechanism's `contribute` receives a context carrying the grid, the onset, the profile, a calibrated magnitude, its world constants and one RNG stream — and **no chamber, tool, world or timeline**. Entity-specific behaviour is not merely forbidden, it is unwritable, because the entity is not in scope. The literal scan remains, over the whole package including subpackages.
 - **D7 (T8):** hazards and duration distributions are shared across all tools; faults change *rates through latents*, not distribution families. The null world exercises every distribution family the fault world uses.
 
 ## 3. The automated leakage test suite
@@ -47,6 +47,16 @@ Runs post-generation (fast subset inside `selftest.py`, full suite in CI over th
 | L11 | Reference-recovery asymmetry | the intended mediated evidence *is* recoverable at moderate/obvious severity by reference queries, and near the floor at subtle | per-scenario expectations table in `eval/fixtures/` |
 
 L11 is the flip side of leakage: a fault that *cannot* be found through its mechanisms means the mechanism (never a label) needs tuning — ADR-004's operational form.
+
+## 3.1 What Step 3A added, and the one debt it leaves
+
+The latent plane is where D1's "the code path from fault identity to yield does not exist" becomes checkable rather than intended, and where two requirements land in full:
+
+- **F10 — no component exists only when a mechanism does.** Every chamber carries every latent, always, with the same dynamics; a null realization exercises the whole distribution vocabulary a faulted one does. Asserted over the complete chamber population, not a sample.
+- **F11 — benign offsets are baseline, not distractor bookkeeping.** Every tool and every chamber carries a permanent offset on every latent, drawn from the shared family, never reset by maintenance, with magnitudes reaching into the subtle-severity band. A declared `benign_offset` distractor widens an offset that was already there. If offsets existed only where one was declared, "this chamber has an offset" would be a categorical value with support only on named entities — leakage class T3 — and a null dataset would be visibly cleaner than a faulted one.
+- **Structural, not lexical.** `test_the_latent_plane_names_no_observable` and `test_the_latent_plane_imports_nothing_observable` check that no identifier or import in `latent.py` or `mechanisms/` reaches a yield, defect, alarm or measurement concept. The only output of the slice is hidden float state.
+
+**Debt carried into 3B (record it here so it is not forgotten):** only PMs currently move latent state. When fault-driven repair is wired in, **background breakdowns must move latent state too**. If only fault-driven repairs recovered a latent, "a repair after which behaviour changed" would be a perfect fault fingerprint (T3/T5) — visible on affected chambers and on no others.
 
 ## 4. Process rules (human-side leakage)
 
