@@ -85,3 +85,16 @@ Because routing is availability-driven and lots overlap, the affected-wafer set 
 5. Alarm times for mechanism-driven alarms lie within [onset, repair] of their event (background false alarms exempt).
 6. Maintenance intervals coincide with DOWN/PM state intervals exactly.
 7. Lot `finish_time` = last activity of its wafers (+ closeout delay); lot status consistent with progress at horizon end (fixes the audited oldest-lots-IN_PROGRESS artifact).
+
+## 7. As implemented (Phase 1 Step 2 — `src/fabsim/world.py`, `src/fabsim/timeline.py`)
+
+The world and timeline slice is built; mechanisms, latent state, alarms and every observable measurement are later slices. Deltas a reviewer should know about, all of them deliberate:
+
+- **Dedication windows live in the world template, not in the scenario.** §2.2 describes dedication as something "the scenario declares", but the implemented `fabsim.scenario/v1` contract has no dedication field, and that contract is closed. Dedication is therefore a **routing policy** (`routing.dedications` in the world template: product × operation type × day window), which is where the other routing constants already live. The baseline world declares none; scenario G will need either a world variant or a scenario-contract extension, and that choice belongs to the scenario slice.
+- **PM is tool-scoped, breakdowns are chamber-scoped**, matching the nullable `maintenance.chamber_id` of `SCHEMA_V2_DESIGN.md` §2.18. A tool-wide PM blocks every chamber of the tool.
+- **QUAL follows every PM and every unscheduled window** and blocks production like the window itself, so the state vocabulary has support everywhere without a mechanism having to mint it.
+- **Runs are placed whole into gaps** between blocking windows rather than being interrupted by one: a wafer that cannot finish before the chamber goes down waits for it to come back. This is what makes invariant §6.2 structural rather than a post-hoc correction.
+- **Ties among equally-available chambers are broken by a seeded draw, not by entity id.** In a lightly loaded fab nearly every candidate is free at once, so id order would hand almost all work to the lowest-numbered chamber and starve the rest — an exposure pattern dictated by template order rather than by availability.
+- **Run durations never depend on the chamber that ran them** (they are drawn per wafer × flow step), so timing cannot become a chamber fingerprint.
+- **The queue/transport delay between steps is the dominant cycle-time term**, which is what makes the ~4-day release cadence produce genuinely overlapping lots rather than one lot at a time.
+- **The timeline never reads `events` or `distractors`.** At a fixed seed, a null scenario and a fault scenario over the same world produce the identical schedule; the mechanism layer changes what that schedule *means*, never where the wafers went.
