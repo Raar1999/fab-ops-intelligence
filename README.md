@@ -7,6 +7,8 @@
 ![Defect maps: edge-ring signature isolated to ETCH-02](reports/figures/04_wafer_maps.png)
 
 > ⚠️ **All data is synthetic** (generated with `seed=42`). The dataset is deliberately seeded with *one* discoverable root cause. No number in this repo is a real-world benchmark — the value on display is the **investigation method, SQL, and engineering judgement**, not the figures.
+>
+> **This is a demonstration RCA, not a discovery engine.** The pipeline narrates and verifies the planted cause — the suspect is a documented constant (`fabops.config.DEMO_SUSPECT_TOOL`), not a computed result. The forensic audit of exactly how the conclusion is reached, and the plan to evolve this into a genuine detection → diagnosis system, live in [`docs/`](docs/).
 
 ---
 
@@ -100,7 +102,7 @@ fab-operations-analytics/
 
 ## Design notes
 
-- **Logic lives in SQL views, not in app code.** `views.sql` defines 12 named, testable views; the dashboard and notebook stay thin (`SELECT * FROM v_…`). This is how a real BI/analytics layer is structured.
+- **Logic lives in SQL views, not in app code.** `views.sql` defines 13 named, testable views; the dashboard and notebook stay thin (`SELECT * FROM v_…`). Gate etch — the step every analysis pivots on — is defined exactly once (`v_gate_etch_runs`, resolved by step *name*, not a magic id). This is how a real BI/analytics layer is structured.
 - **A star model for the BI layer.** `fact_yield` pre-joins each wafer to its lot/product/gate-etch-tool dimensions so aggregations are one-liners.
 - **Data-calibrated defect zoning.** On this 300 mm wafer, EDGE_RING defects sit at a mean radius of ~143 mm and CENTER at ~18 mm, so the center/mid/edge cut-offs (50 mm / 110 mm) cleanly separate the spatial classes — which is what makes the wafer-map showpiece read.
 - **Tests assert the *story*, not just that queries run.** `test_queries.py` checks that ETCH-02 is the worst etcher on every signal, that edge-ring defects are radially at the edge, and that defect load anti-correlates with yield.
@@ -111,9 +113,9 @@ Python · SQLite · pandas · matplotlib · Streamlit · pytest. No external ser
 
 ## Résumé bullets (honest — describes work actually done here)
 
-- Built an end-to-end fab-operations analytics project (SQL + Python) over a synthetic 300-wafer MES-style dataset, integrating yield, defect, tool, and maintenance data behind a 12-view analytical layer and a `fact_yield` star model.
+- Built an end-to-end fab-operations analytics project (SQL + Python) over a synthetic 300-wafer MES-style dataset, integrating yield, defect, tool, and maintenance data behind a 13-view analytical layer and a `fact_yield` star model.
 - Implemented a documented root-cause investigation that traced a uniform ~9-point yield miss to a single marginal etch chamber via three converging signals — gate-etch yield (64% vs 79%), edge-ring defect fraction (3×), and unscheduled downtime — and confirmed the fault spatially from defect x/y coordinates.
-- Quantified defect-load-to-yield correlation (Pearson r = −0.55) and lot-level exposure for containment; shipped an interactive Streamlit dashboard and a 26-test pytest suite that guards both schema integrity and the analytical findings.
+- Quantified defect-load-to-yield correlation (Pearson r = −0.55) and lot-level exposure for containment; shipped an interactive Streamlit dashboard and a 27-test pytest suite that guards both schema integrity and the analytical findings.
 
 ---
 

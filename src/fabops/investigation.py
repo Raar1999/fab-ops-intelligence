@@ -157,6 +157,8 @@ def recommendation():
 def main():
     print("FAB OPERATIONS ANALYTICS — root-cause investigation")
     print("Synthetic 300-wafer dataset (seed=42). No number here is a real benchmark.")
+    print("Demonstration RCA: narrates the KNOWN planted root cause "
+          "(fabops.config.DEMO_SUSPECT_TOOL; see docs/audit/RCA_AUDIT.md).")
     step1_symptom()
     step2_suspect()
     step3_defect_signature()
