@@ -1,0 +1,22 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "parameter_drift",
+  "description": "Scenario C. One etch chamber's delivered gas flow walks away from its setpoint over weeks — a slow ramp, never a step. The signature is temporal rather than spatial: the FDC flow summary trends, post-etch CD walks off target on that chamber alone, the defect population barely notices, and yield gives way late and gently through parametric die kills. Severity is subtle on purpose, so the drift sits below the alarm thresholds for most of the window: this scenario rewards a monitor that reads parameters, and punishes one that waits for yield to confirm what the process already said.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "param_drift",
+      "target": {"tool": "ETCH-03", "chamber": "A"},
+      "onset_day": 30,
+      "profile": {"type": "ramp", "ramp_days": 21},
+      "severity": "subtle"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}

@@ -1,0 +1,22 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "chamber_edge_uniformity",
+  "description": "Scenario B, and the ADR-010 continuity anchor. One etch chamber develops radial non-uniformity part-way through the horizon: the hidden edge_uniformity latent ramps over a week and then sustains, which moves post-etch CD at the edge sites and widens the within-wafer spread, raises edge-ring defect intensity on the wafers that chamber etched, and kills die at large radius through geometry alone. Nothing labels the chamber and nothing subtracts from yield; the observable consequence is whatever the physics produced. The diagnostic task is to attribute this to the chamber rather than to the tool, to the co-routed products, or to the ordinary chamber-to-chamber differences every world has.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "chamber_edge_uniformity",
+      "target": {"tool": "ETCH-02", "chamber": "B"},
+      "onset_day": 35,
+      "profile": {"type": "ramp", "ramp_days": 7},
+      "severity": "moderate"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}

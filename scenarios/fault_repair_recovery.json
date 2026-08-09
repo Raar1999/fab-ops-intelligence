@@ -1,0 +1,22 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "fault_repair_recovery",
+  "description": "Scenario I. A particle-load excursion on one CVD chamber: the load climbs far faster than the ordinary between-PM accumulation, particle-cluster defect intensity rises with it, the in-situ particle alarm crosses its threshold repeatedly, three complaints inside a week become a work order, and an unscheduled repair follows a human delay. Recovery is real but imperfect — the intervention quality is drawn, so a residual survives and 'did the repair work?' is a question with a nontrivial answer. Nothing here is configured except the excursion: the alarms, the escalation, the repair and the recovery are all what the fab's own generic response machinery did about it. The sequence is the signal.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "particle_excursion",
+      "target": {"tool": "CVD-01", "chamber": "A"},
+      "onset_day": 40,
+      "profile": {"type": "step"},
+      "severity": "obvious"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}

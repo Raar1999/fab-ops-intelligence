@@ -192,6 +192,26 @@ Common world: `baseline_fab_v1` — 6 products, 1 flow (14 steps), 15 tools (3 e
 - **Diagnostic challenge:** temporal reasoning — "did maintenance precede recovery?", "which wafers are inside the window?"; avoid blaming the tool for the *post*-repair period.
 - **Benchmark purpose:** maintenance-effect analysis and affected-window scoping; validates that maintenance is finally causally coupled to production (audit violation #14).
 
+## 4.1 As implemented (the scenario-library gate)
+
+All five ship as `scenarios/*.json`, validated through `fabsim.scenario` with no second parser, and indexed in `scenarios/README.md` — the maintainers' slug ↔ id map, which is answer-key material and lives on the hidden side of the boundary. Measured on the library at seed 42, from the **observable plane only** except where noted:
+
+| | Realized | Observable signature |
+|---|---|---|
+| **A** `null_baseline` | `events: []` | 74 alarms, 43 unscheduled repairs, 21,008 defects, wafer yield 87.4% ± 4.7, all five bin codes, no perfect wafer. Within 1.5× of every fault scenario on alarm, maintenance, defect and yield volume — a control that was quieter would be separable by volume alone. |
+| **B** `chamber_edge_uniformity` | 3.22σ on ETCH-02/B | The planted chamber ranks **first** on all three edge-sensitive channels — edge-site CD deviation (z=+2.65), edge-zone defect share (z=+2.34) and alarm count (z=+3.36). |
+| **C** `parameter_drift` | 1.10σ… (see below) | A positive CD trend on the planted chamber, **second of seven** at z≈+1.0, and no alarm standing. |
+| **G** `confounded_chamber_vs_product` | 2.98σ on ETCH-01/A | Mobile-28's ETCH-01 share goes 0.28 outside the window → **0.94 inside**, while 11 of its runs still go elsewhere, 50 other-product runs still reach ETCH-01, and the chamber split inside the tool stays 184/186. |
+| **I** `fault_repair_recovery` | 8.76σ on CVD-01/A | onset (day 40) → first `PARTICLE_HI` **2 days later** → repair window on day 47, all from observable timestamps; exposed METAL defect rate rises against a flat fab-wide control. |
+
+Three results are worth stating plainly because they are smaller or stranger than the §4 prose anticipated, and none of them was tuned away:
+
+- **C at `subtle` is near the detection floor, which is what `subtle` means.** Its realized shift is 0.69σ (the 21-day ramp only reaches full magnitude at day 51, and PM recentring removes part of it continuously), and its planted chamber ranks first, second or third of seven depending on where the analysis window is cut. §8 defines subtle as "near the detection floor; no alarms; benchmark headroom", so this is the specification being met rather than missed — but a diagnosis engine will not find C with one GROUP BY, and it is not meant to.
+- **ETCH-02/B already carries a large benign edge offset at seed 42.** With scenario B's mechanism removed and nothing else changed, that chamber still stands at z≈+1.4 on edge-site CD; the mechanism adds ≈+1.2 on top. That is rule F11's standing structure doing exactly what it exists to do, and it makes B harder than the §4 prose implies: part of the chamber's apparent guilt is honest background.
+- **B's repair at seed 42 was a no-fix.** The escalation-driven repair drew `no_fix=True` — the declared 10% (`CAUSAL_MECHANISM_MODEL.md` §6) — so the realized recovery fraction is 0.0 rather than §4's anticipated ≈80%. The seed was not changed to obtain a nicer draw. "Did the intervention work?" has the answer "no" in this dataset, which is a legitimate and useful thing for a benchmark to contain.
+
+The `response` block §4 mentions for I (a configured 15% residual) is **not** used: ADR-017 §2 made the response engine fab-wide, so a scenario's `response` block is declared intent that the engine never reads, and the residual is emergent from the Beta(8, 2) quality draw. Recording an inert block would suggest otherwise.
+
 ## 5. Identity, naming, reproducibility
 
 **Canonicalization comes first.** A configuration is normalized before it is hashed: optional fields filled with their defaults, counts as integers and days as floats (`35` and `35.0` are the same day), strings stripped, keys sorted, compact separators, ASCII-escaped, list order preserved because event order is semantic. Two files that mean the same thing therefore produce the same canonical text and the same identity, whatever their formatting, key order, indentation, or byte-order mark.

@@ -1,0 +1,32 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "confounded_chamber_vs_product",
+  "description": "Scenario G, the hard one. The same kind of equipment fault as B, on a different chamber — and overlapping it, a declared routing condition that sends most of one product's etch traffic to the faulty chamber's tool. Product identity and chamber exposure become correlated, so a naive GROUP BY implicates both and cannot choose. The preference is deliberately imperfect: the dedicated product still reaches other tools, other products still reach this one, and within the tool the chamber is still picked by availability, which is what leaves both control comparisons data to run on. The chamber effect must survive a within-product comparison; the product effect must not survive a within-chamber one. The routing shift itself is honest observable data in `runs`, not hidden state.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "chamber_edge_uniformity",
+      "target": {"tool": "ETCH-01", "chamber": "A"},
+      "onset_day": 35,
+      "profile": {"type": "ramp", "ramp_days": 7},
+      "severity": "moderate"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": [
+    {
+      "kind": "product_dedication",
+      "product": "Mobile-28",
+      "tool": "ETCH-01",
+      "operation_type": "ETCH",
+      "start_day": 28,
+      "end_day": 62,
+      "share": 0.85
+    }
+  ]
+}

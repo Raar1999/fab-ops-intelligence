@@ -1,0 +1,14 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "null_baseline",
+  "description": "Scenario A. No fault anywhere. Everything that moves in this dataset is baseline physics: the fab-week wander, the lot AR(1), the permanent tool and chamber offsets every entity carries (rule F11), the PM sawtooth in particle load, background breakdowns, background false alarms and the escalations some of them earn. It is not a clean world and must never become one — it is the yardstick every severity level is calibrated against and the control a diagnosis engine's false-positive rate is measured on. The correct answer here is 'insufficient evidence', and meaning it is the hard part.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [],
+  "distractors": [],
+  "routing_conditions": []
+}
