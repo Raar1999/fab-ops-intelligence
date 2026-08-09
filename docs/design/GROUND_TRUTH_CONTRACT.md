@@ -106,7 +106,7 @@ Enforcement of §4 is wired: `fabops` and `app` are scanned for `fabsim` imports
 |---|---|---|---|
 | `fabsim` | writes | reads | writes |
 | `fabops` (all analytical code, dashboard, notebooks) | **reads** | **never** | **never** |
-| `eval/` (Phase 6 benchmark; Phase 1 self-test fixtures) | reads | may read | **reads** |
+| `eval/` — implemented as `src/fabeval/` (ADR-024) | reads | may read | **reads** |
 | CI leakage suite | reads | reads | reads (it verifies the boundary) |
 
 Enforcement (designed now, wired in Phase 1 implementation):
@@ -114,6 +114,14 @@ Enforcement (designed now, wired in Phase 1 implementation):
 1. **Import lint:** no module under `src/fabops/` or `app/` may import `fabsim` or reference the strings `scenarios/`, `truth/`, `truth.json` (test L9 in `ANTI_LEAKAGE_DESIGN.md`).
 2. **API shape:** the only supported entry point for analytical code is "open `<dataset_dir>/fab.db`"; fabops helpers take a DB path, never a dataset directory — so reaching truth requires deliberate circumvention, not accident.
 3. **CI check:** the benchmark runner is the sole code path constructing truth paths; a grep-based CI job fails on new references.
+
+### 4.1 As implemented (the benchmark gate)
+
+The validator A10 named exists: `fabeval.truthschema.validate_truth` checks a truth artifact against this document — required fields, types, closed vocabularies, ordering, ranges, and the internal references only truth can check (an event's `expected_impact` cohort cannot exceed its own affected-wafer list; `latent_summaries` must cover every chamber the events name; `hidden_counts` must describe a hidden plane that exists). It **never repairs** — a missing field, a wrong type, a dangling reference and an out-of-range exposure are all rejections — and a rejection names the field, `events[0].affected_wafers[3].exposure` rather than "invalid truth". It lives in the evaluator rather than in `fabsim` on purpose: a generator that validated its own output against its own idea of the contract would be marking its own homework.
+
+The two fields ADR-023 §5 records as deliberately absent are *accepted* as absent, because requiring them would require the emitter to guess.
+
+Enforcement of §4 is now mechanical in all three rows: `fabops` and `app` are scanned for `fabsim`/`fabeval` imports and for the strings `scenarios/`, `truth/` and `truth.json`; `fabsim` is scanned for any import of its own grader; and `fabeval` is scanned for any write call, because a grader that could write into a dataset could contaminate the thing it grades.
 
 ## 5. Versioning and evolution
 

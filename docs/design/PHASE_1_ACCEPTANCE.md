@@ -4,6 +4,26 @@
 
 ---
 
+## A0. Where the criteria stand (the benchmark gate)
+
+`src/fabeval/` scores A1-A11 over the five-scenario library and reports one of three verdicts. `PARTIAL` is used deliberately and often: several criteria have a half this gate settles and a half that needs CI, a severity sweep, or a manual review, and calling those PASS would make the matrix a worse instrument than no matrix. Run with `fabeval.build_library` + `fabeval.evaluate`; `fabeval.render` prints the table below.
+
+| | Status | What is outstanding |
+|---|---|---|
+| A1 | PARTIAL | checks 1-3 green on every scenario; check 4 (reference-image `fab.db` byte compare) is a CI-environment job |
+| A2 | **PASS** | - |
+| A3 | PARTIAL | the null is populated, varied and no quieter than the fault scenarios; the "full integrity suite" half is A4 and the L7/L10 half is A7 |
+| A4 | **PASS** | - |
+| A5 | PARTIAL | onset placement and the alarm->repair ordering hold; the metrology->defect->yield *series* ordering is not asserted (see below) |
+| A6 | PARTIAL | every scenario's declared evidence is recoverable at its configured severity; the severity sweep is not run |
+| A7 | PARTIAL | L1-L11 green where applicable; 8 checks are not applicable to their dataset and are reported SKIP, not PASS |
+| A8 | PARTIAL | chamber usage and etch independence hold; recipe and benign-offset items belong to A4 and 3C |
+| A9 | **BLOCKED** | the cohort yield deficit is +0.47 pts against 4-10, and the wafer-map review is manual |
+| A10 | **PASS** | - |
+| A11 | PARTIAL | the legacy artifacts are present and still schema v1; the 27-test behavioural half is the test suite's |
+
+**A5's wording assumes a lag the physics does not have.** The criterion asks that the affected-cohort series "depart baseline in causal order (metrology -> defects -> yield)". In this model those three are *simultaneous*: a run's latent state moves its own FDC and metrology, the same state feeds that wafer's defect intensity, and the die grid reads both on the same wafer. There is no lag to order them by, and asserting one would be asserting an artifact. What A5 does check, and what carries its intent, is that the *response* arc is ordered - onset before the condition alarm before the repair window - and that onset sits inside the horizon with at least 30% baseline before it. Recorded here rather than quietly dropped.
+
 ## A. Acceptance criteria
 
 ### A1 — Reproducibility

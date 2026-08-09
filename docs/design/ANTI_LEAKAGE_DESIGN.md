@@ -104,6 +104,17 @@ Static guards: the engine names no mechanism, event, scenario, severity, counter
 - **The spatial signature is geometry both ways.** Edge die die more often than centre die *in the null world* — the benign radial term reaches them and edge-ring defects land on them. A gradient that appeared only under a fault would be the fingerprint; one that is always there is a background an analyst has to see past.
 - **The hidden cause is a separate record.** `DieBin` carries a position and a bin code: no cause, no killer flag. A bin is drawn through a symptom row, every cause reaches more than one bin and every bin arises from more than one cause, so the observable plane cannot be read back into the kill model — the same property the defect classifier has (D3/T4).
 
+## 3.6 As implemented (the benchmark gate)
+
+L1-L11 are built in `fabeval.leakage` and run over every library dataset; the expectations L11 scores against live in `fabeval.fixtures`, separate from the checks, because a check that decided for itself what "recoverable" means could always be satisfied. Measured on the library at seed 42 and on scenario B at 101 and 2024: **no failures**. Checks that cannot apply are reported `SKIP` rather than `PASS` — a null has no affected cohort, so L3, L4, L6 and L10 have nothing to separate, and saying they passed would be counting four checks that never ran.
+
+Two of the eleven were wrong when first written, and both were corrected in the evaluator rather than in the simulator (ADR-024 §6):
+
+- **L5** compared an origin's *name* against a class's and called the difference "disagreement", which read 0.96 on a perfectly honest classifier — origins and classes are different vocabularies. It now compares the realized per-origin class distribution against the world's own declared confusion matrix, and additionally requires every class to arise from more than one origin. Realized worst cell across the library: within 0.08 of the declared probability.
+- **L11's expectation for scenario B** required all three declared channels to lead. ADR-018 records that `edge_uniformity` is signed and the edge-*defect* channel reads its absolute value, so across B's three seeds the planted chamber ranks 1st, 3rd and 6th on that channel while ranking 1st every time on metrology. The defect channel is now marked corroborating: measured and reported, unable to fail the scenario alone.
+
+Representative numbers: L3's unexplained cohort residual is +0.57 / +1.21 / -0.27 points on B / G / C against a 2-point limit (the audited direct effect was 8); L6's overlap coefficient is 0.79-0.87 against a 0.20 floor; L8's worst pairwise Jaccard across three seeds of B is 0.161 against a 0.9 limit.
+
 ## 4. Process rules (human-side leakage)
 
 1. New mechanisms/scenarios must ship with their L-suite expectations before merging.
