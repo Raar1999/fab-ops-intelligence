@@ -16,22 +16,28 @@
   "products": [
     {"name": "Mobile-28",  "flow": "logic_baseline", "technology_node_nm": 28,
      "wafer_size_mm": 300, "die_size_mm2": 32.0, "target_yield_pct": 87.5,
-     "mix_weight": 4, "metric_scale": 0.62, "defect_scale": 1.0},
+     "mix_weight": 4, "metric_scale": 0.62, "defect_scale": 1.0,
+     "killer_density_per_mm2": 0.00385},
     {"name": "Logic-14",   "flow": "logic_baseline", "technology_node_nm": 14,
      "wafer_size_mm": 300, "die_size_mm2": 24.0, "target_yield_pct": 84.0,
-     "mix_weight": 3, "metric_scale": 0.34, "defect_scale": 1.25},
+     "mix_weight": 3, "metric_scale": 0.34, "defect_scale": 1.25,
+     "killer_density_per_mm2": 0.00645},
     {"name": "Auto-40",    "flow": "logic_baseline", "technology_node_nm": 40,
      "wafer_size_mm": 300, "die_size_mm2": 55.0, "target_yield_pct": 91.0,
-     "mix_weight": 3, "metric_scale": 0.88, "defect_scale": 0.85},
+     "mix_weight": 3, "metric_scale": 0.88, "defect_scale": 0.85,
+     "killer_density_per_mm2": 0.00152},
     {"name": "Memory-22",  "flow": "logic_baseline", "technology_node_nm": 22,
      "wafer_size_mm": 300, "die_size_mm2": 68.0, "target_yield_pct": 86.0,
-     "mix_weight": 3, "metric_scale": 0.48, "defect_scale": 1.1},
+     "mix_weight": 3, "metric_scale": 0.48, "defect_scale": 1.1,
+     "killer_density_per_mm2": 0.002},
     {"name": "IoT-65",     "flow": "logic_baseline", "technology_node_nm": 65,
      "wafer_size_mm": 300, "die_size_mm2": 18.0, "target_yield_pct": 93.0,
-     "mix_weight": 2, "metric_scale": 1.42, "defect_scale": 0.7},
+     "mix_weight": 2, "metric_scale": 1.42, "defect_scale": 0.7,
+     "killer_density_per_mm2": 0.0039},
     {"name": "Sensor-90",  "flow": "logic_baseline", "technology_node_nm": 90,
      "wafer_size_mm": 300, "die_size_mm2": 96.0, "target_yield_pct": 94.0,
-     "mix_weight": 1, "metric_scale": 2.0, "defect_scale": 0.6}
+     "mix_weight": 1, "metric_scale": 2.0, "defect_scale": 0.6,
+     "killer_density_per_mm2": 0.00045}
   ],
 
   "process_steps": [
@@ -461,6 +467,34 @@
       "quality_alpha": 8.0,
       "quality_beta": 2.0,
       "no_fix_probability": 0.1
+    }
+  },
+
+  "die_kill": {
+    "background": {
+      "lot_log_sigma": 0.12,
+      "wafer_log_sigma": 0.16
+    },
+    "defect": {
+      "half_kill_size_um": 0.45,
+      "halo_um": 0.6,
+      "layer_weights": {
+        "GATE": 1.0,
+        "METAL": 0.8
+      }
+    },
+    "parametric": {
+      "kill_limit_tolerances": 3.0,
+      "within_die_sigma": 0.25
+    },
+    "tester": {
+      "pass_code": "PASS",
+      "fail_codes": ["OPEN_SHORT", "PARAM", "LEAK", "OTHER"],
+      "confusion": {
+        "background": {"OPEN_SHORT": 0.44, "PARAM": 0.22, "LEAK": 0.2, "OTHER": 0.14},
+        "defect": {"OPEN_SHORT": 0.72, "PARAM": 0.1, "LEAK": 0.08, "OTHER": 0.1},
+        "parametric": {"PARAM": 0.56, "LEAK": 0.24, "OPEN_SHORT": 0.1, "OTHER": 0.1}
+      }
     }
   },
 

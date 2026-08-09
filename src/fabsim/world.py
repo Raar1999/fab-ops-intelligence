@@ -74,6 +74,7 @@ __all__ = [
     "CHANNEL_KINDS",
     "CONTRACT",
     "DIE_INDEX_ORDERS",
+    "DIE_KILL_CAUSES",
     "DIE_ORIGINS",
     "HEADER_KEY",
     "HEADER_VALUE",
@@ -86,6 +87,7 @@ __all__ = [
     "PARTIAL_DIE_POLICIES",
     "SEVERITY_LEVELS",
     "SHIFTS",
+    "TEST_OPERATION",
     "WORLD_DOCUMENTATION_KEYS",
     "WORLD_IDENTITY_DOMAIN",
     "WORLD_TEMPLATE_ROOT",
@@ -97,6 +99,7 @@ __all__ = [
     "DefectOriginPolicy",
     "DefectPolicy",
     "DieGridPolicy",
+    "DieKillPolicy",
     "HourRange",
     "FlowStep",
     "LatentDynamics",
@@ -116,6 +119,7 @@ __all__ = [
     "Recipe",
     "RoutingPolicy",
     "StepMetric",
+    "TesterPolicy",
     "Tool",
     "VariationStack",
     "World",
@@ -170,6 +174,13 @@ SHIFTS = ("A", "B", "C")
 METROLOGY_OPERATION = "METROLOGY"
 INSPECTION_OPERATION = "INSPECTION"
 
+#: Where a wafer meets a tester. Electrical probe is the last thing that
+#: happens to a wafer in Phase 1's route, and it is the step the die/yield
+#: plane hangs off: `wafer_yield.test_time` is *this* step's clock
+#: (`SCHEMA_V2_DESIGN.md` §4.2). Generic fab vocabulary, like the two above —
+#: it names an operation, never a tool and never an outcome.
+TEST_OPERATION = "TEST"
+
 #: What an observation channel is: an FDC summary the *process* tool records
 #: (grounded in a recipe setpoint), or a metrology read-out (grounded in a step
 #: metric). `SCHEMA_V2_DESIGN.md` §2.14 / §2.15.
@@ -215,6 +226,17 @@ MECHANISM_DEFAULT_KEYS = tuple(sorted(_MECHANISM_DEFAULT_SCHEMA))
 #: point is that the convention is *stated and versioned*, so the later yield
 #: model derives die coordinates from declared geometry rather than from an
 #: assumption nobody wrote down.
+#: Why a die failed, as *physics* rather than as a bin code
+#: (`CAUSAL_MECHANISM_MODEL.md` §5). Three competing risks, closed and
+#: versioned: the background killer density every product carries, a reported
+#: defect that physically reached the die, and a parametric miss where the
+#: wafer's own measured profile put that die outside its functional window.
+#: A tester never sees this list — it sees a bin code drawn through the
+#: `die_kill.tester` confusion, which is what keeps a bin evidence rather than
+#: a label. There is no member for a mechanism, and no field by which one
+#: could be added.
+DIE_KILL_CAUSES = ("background", "defect", "parametric")
+
 DIE_ORIGINS = ("wafer_center",)
 DIE_INDEX_ORDERS = ("row_major",)
 PARTIAL_DIE_POLICIES = ("exclude",)
@@ -223,14 +245,15 @@ _TEMPLATE_REQUIRED = (HEADER_KEY, "name", "time_origin", "wafers_per_lot",
                       "operation_types", "layers", "products", "process_steps",
                       "process_flows", "tools", "operators", "routing",
                       "lot_release", "queue", "maintenance", "observation",
-                      "alarms", "die_grid", "latents", "mechanisms",
-                      "response", "defects")
+                      "alarms", "die_grid", "die_kill", "latents",
+                      "mechanisms", "response", "defects")
 _TEMPLATE_OPTIONAL = ("description", "recipes")
 _TEMPLATE_KEYS = _TEMPLATE_REQUIRED + _TEMPLATE_OPTIONAL
 
 _PRODUCT_REQUIRED = ("name", "flow", "technology_node_nm", "wafer_size_mm",
                      "die_size_mm2", "target_yield_pct", "mix_weight",
-                     "metric_scale", "defect_scale")
+                     "metric_scale", "defect_scale",
+                     "killer_density_per_mm2")
 _STEP_REQUIRED = ("name", "operation_type", "duration_minutes")
 _STEP_OPTIONAL = ("is_inspection", "metric", "settings", "measures", "covers",
                   "layer")
@@ -302,6 +325,12 @@ _DEFECT_CENTER_KEYS = ("sigma_fraction",)
 _DEFECT_CLUSTER_KEYS = ("radius_mm", "mean_defects")
 _DEFECT_SCRATCH_KEYS = ("length_fraction", "jitter_mm")
 _DEFECT_ORIGIN_KEYS = ("base_rate", "sensitivities")
+
+_DIE_KILL_KEYS = ("background", "defect", "parametric", "tester")
+_DIE_KILL_BACKGROUND_KEYS = ("lot_log_sigma", "wafer_log_sigma")
+_DIE_KILL_DEFECT_KEYS = ("half_kill_size_um", "halo_um", "layer_weights")
+_DIE_KILL_PARAMETRIC_KEYS = ("kill_limit_tolerances", "within_die_sigma")
+_TESTER_KEYS = ("pass_code", "fail_codes", "confusion")
 
 #: Names that are code-level identifiers (template and flow names) versus names
 #: that are shop-floor vocabulary (``ETCH-02``, ``B``, ``OP-101``).
@@ -551,6 +580,18 @@ class Product:
     #: product-dependent: it is standing structure a naive commonality
     #: analysis could wrongly accuse (§3).
     defect_scale: float
+    #: Density of *killer* defects this product's process leaves behind, per
+    #: mm² of die — the D₀ of the classical Poisson yield model, and the
+    #: `p_bg` of `CAUSAL_MECHANISM_MODEL.md` §5. It is deliberately a separate
+    #: number from `defect_scale`: an inspection reports only what its own
+    #: threshold can see at the two layers it scans, and a wafer's killers are
+    #: mostly the ones no scanner reported. Combined with the die's area this
+    #: gives a background kill probability per die, so a bigger die catches
+    #: more of the same density — the reason die size is a yield lever at all.
+    #: Per product because process complexity is (rule D6 keys by product);
+    #: `target_yield_pct` is the *specification* this was calibrated against
+    #: on the null world, and no engine reads it.
+    killer_density_per_mm2: float
 
 
 @dataclass(frozen=True)
@@ -1085,6 +1126,86 @@ class DieGridPolicy:
 
 
 @dataclass(frozen=True)
+class TesterPolicy:
+    """How a dead die is *binned* — a symptom, never a cause.
+
+    `CAUSAL_MECHANISM_MODEL.md` §5: a killed die gets a bin code from a
+    symptom distribution conditioned on how it died, with cross-assignment
+    noise. A defect that opened a line mostly bins OPEN_SHORT and a parametric
+    miss mostly bins PARAM or LEAK, but neither does so reliably — which is
+    what makes `die_bins` evidence a diagnosis engine has to weigh instead of
+    the kill model's own answer written out in words. The audited v1's
+    formulaic fail-bin fractions have no successor.
+    """
+
+    pass_code: str
+    fail_codes: tuple[str, ...]
+    #: kill cause → ((bin code, probability), …), rows in `DIE_KILL_CAUSES`
+    #: order, each summing to 1 over `fail_codes`.
+    confusion: tuple[tuple[str, tuple[tuple[str, float], ...]], ...]
+
+    @property
+    def codes(self) -> tuple[str, ...]:
+        return (self.pass_code,) + self.fail_codes
+
+    def row(self, cause: str) -> tuple[tuple[str, float], ...]:
+        return dict(self.confusion)[cause]
+
+
+@dataclass(frozen=True)
+class DieKillPolicy:
+    """The three competing risks of `CAUSAL_MECHANISM_MODEL.md` §5.
+
+    Every constant is keyed by layer or stated once for the fab; the
+    per-product part of the model lives on the product (`defect_scale`,
+    `killer_density_per_mm2`, wafer and die size). Nothing here is keyed by a
+    tool, a chamber, an event or a mechanism, and there is no field by which
+    one could be — which is what makes ADR-004 structural in the yield model
+    rather than intended.
+    """
+
+    #: Spread of a lot's and a wafer's own killer density about its
+    #: product's mean, as the σ of a lognormal. A fab's background
+    #: defectivity is not a constant: it moves with the day, the batch of
+    #: consumables and the lot, and two wafers of one product genuinely differ
+    #: in how dirty their process was. Without this the only wafer-to-wafer
+    #: yield variation is binomial noise over a few thousand die — well under
+    #: a point — and `CAUSAL_MECHANISM_MODEL.md` §2's declared budget
+    #: (wafer σ ≈ 2.5–3.5 pts, lot-to-lot σ ≈ 1–1.5 pts) would be missed by a
+    #: factor of five. A null world that uniform would make any fault
+    #: separable at a glance, which is the audited failure this design exists
+    #: to replace. The draw is keyed by lot and wafer only.
+    background_lot_log_sigma: float
+    background_wafer_log_sigma: float
+    #: Size at which a defect that reached a die kills it half the time. The
+    #: kill probability is `s²/(s² + half²)` — saturating in the defect's
+    #: cross-section, because what bridges a feature is area, not diameter.
+    defect_half_kill_size_um: float
+    #: How far past its own radius a defect still reaches, in µm. "On *or
+    #: near*" a die (§5): a particle just outside the die edge can still
+    #: bridge inward. Small by construction, which is what makes a scribe
+    #: lane a real place for a defect to land harmlessly.
+    defect_halo_um: float
+    #: layer → how lethal a defect reported at that layer is, in [0, 1]. A
+    #: declared per-layer weight, and `layer` is a field the observable defect
+    #: row already carries.
+    defect_layer_weights: tuple[tuple[str, float], ...]
+    #: The *functional* limit, in multiples of the step metric's control
+    #: tolerance. A control limit is where a fab intervenes; a die stops
+    #: working somewhat further out, and conflating the two would make
+    #: ordinary process control look like a yield cliff.
+    parametric_kill_limit_tolerances: float
+    #: Within-die scatter of the parameter around the wafer profile's local
+    #: value, in units of the functional limit. It is what turns a hard spec
+    #: into a smooth probability: a die near the limit fails sometimes.
+    parametric_within_die_sigma: float
+    tester: TesterPolicy
+
+    def layer_weight(self, layer: str) -> float:
+        return dict(self.defect_layer_weights).get(layer, 0.0)
+
+
+@dataclass(frozen=True)
 class MaintenancePolicy:
     pm_interval_days: float
     pm_jitter_days: float
@@ -1131,6 +1252,7 @@ class World:
     observation: ObservationPolicy
     alarms: AlarmPolicy
     die_grid: DieGridPolicy
+    die_kill: DieKillPolicy
     defects: DefectPolicy
     latent_dynamics: tuple[LatentDynamics, ...]
     mechanism_policy: MechanismPolicy
@@ -1749,6 +1871,9 @@ def _build_products(raw: Any, flows: Sequence[ProcessFlow]
             defect_scale=_as_number(_require(obj, "defect_scale", path),
                                     _at(path, "defect_scale"),
                                     greater_than=0.0),
+            killer_density_per_mm2=_as_number(
+                _require(obj, "killer_density_per_mm2", path),
+                _at(path, "killer_density_per_mm2"), greater_than=0.0),
         ))
     _unique([p.product_name for p in products], "products", "product name")
     return tuple(products)
@@ -2617,6 +2742,141 @@ def _build_die_grid(raw: Any, products: Sequence[Product]) -> DieGridPolicy:
     )
 
 
+def _build_tester(raw: Any) -> TesterPolicy:
+    """The bin vocabulary and the symptom rows, validated both directions.
+
+    A cause with no row would be a way to die that the tester cannot describe;
+    a code no row can reach would be a bin that only appears when something
+    specific happened, which is exactly how a vocabulary value becomes a
+    fingerprint (rule D2). Both are rejections, and every code must be
+    reachable from more than nowhere.
+    """
+    path = "die_kill.tester"
+    obj = _as_object(raw, path)
+    _reject_unknown(obj, _TESTER_KEYS, path)
+    pass_code = _as_text(_require(obj, "pass_code", path),
+                         _at(path, "pass_code"), _OPERATION_RE)
+    fail_codes = _build_code_list(_require(obj, "fail_codes", path),
+                                  _at(path, "fail_codes"))
+    if pass_code in fail_codes:
+        raise WorldTemplateError(
+            f"{pass_code!r} is both the passing bin and a failing one",
+            _at(path, "pass_code"))
+
+    confusion_path = _at(path, "confusion")
+    confusion_obj = _as_object(_require(obj, "confusion", path),
+                               confusion_path)
+    for key in confusion_obj:
+        if key not in DIE_KILL_CAUSES:
+            raise WorldTemplateError(
+                f"{key!r} is not a declared kill cause; symptom rows are keyed "
+                "by cause, never by an entity, an event or a mechanism",
+                _at(confusion_path, key))
+    reachable: set[str] = set()
+    rows: list[tuple[str, tuple[tuple[str, float], ...]]] = []
+    for cause in DIE_KILL_CAUSES:
+        row_path = _at(confusion_path, cause)
+        if cause not in confusion_obj:
+            raise WorldTemplateError(
+                f"kill cause {cause!r} has no symptom row; a die that dies "
+                "this way would have no bin to be reported in", row_path)
+        row = _as_object(confusion_obj[cause], row_path)
+        weights: list[tuple[str, float]] = []
+        for code, value in row.items():
+            if code not in fail_codes:
+                raise WorldTemplateError(
+                    f"{code!r} is not a declared failing bin",
+                    _at(row_path, code))
+            weight = _as_number(value, _at(row_path, code), minimum=0.0,
+                                maximum=1.0)
+            if weight > 0.0:
+                reachable.add(code)
+            weights.append((code, weight))
+        total = sum(weight for _code, weight in weights)
+        if abs(total - 1.0) > 1e-9:
+            raise WorldTemplateError(
+                f"probabilities must sum to 1, got {total}", row_path)
+        rows.append((cause, tuple(sorted(weights))))
+
+    missing = sorted(set(fail_codes) - reachable)
+    if missing:
+        raise WorldTemplateError(
+            "bin(s) " + ", ".join(repr(code) for code in missing)
+            + " cannot be reached by any kill cause; a bin no die can be "
+            "assigned is a code whose appearance would mean one thing only",
+            confusion_path)
+    return TesterPolicy(pass_code=pass_code, fail_codes=fail_codes,
+                        confusion=tuple(rows))
+
+
+def _build_die_kill(raw: Any, layers: Sequence[str]) -> DieKillPolicy:
+    """How a die dies, and how a tester describes it having died.
+
+    Three competing risks, none of which has anywhere to put a fault: the
+    background density is a property of the product, the defect term reads a
+    reported defect's own size, layer and coordinates, and the parametric term
+    reads the wafer's own measured profile against its own recipe's spec.
+    """
+    obj = _as_object(raw, "die_kill")
+    _reject_unknown(obj, _DIE_KILL_KEYS, "die_kill")
+
+    background_path = "die_kill.background"
+    background = _as_object(_require(obj, "background", "die_kill"),
+                            background_path)
+    _reject_unknown(background, _DIE_KILL_BACKGROUND_KEYS, background_path)
+
+    defect_path = "die_kill.defect"
+    defect = _as_object(_require(obj, "defect", "die_kill"), defect_path)
+    _reject_unknown(defect, _DIE_KILL_DEFECT_KEYS, defect_path)
+
+    weights_path = _at(defect_path, "layer_weights")
+    weights_obj = _as_object(_require(defect, "layer_weights", defect_path),
+                             weights_path)
+    for key in weights_obj:
+        if key not in layers:
+            raise WorldTemplateError(
+                f"{key!r} is not a declared layer; a defect's lethality is "
+                "keyed by the layer it was reported at, never by an entity",
+                _at(weights_path, key))
+    for layer in layers:
+        if layer not in weights_obj:
+            raise WorldTemplateError(
+                f"layer {layer!r} has no weight; a defect reported at a layer "
+                "the kill model cannot weigh would be silently harmless",
+                _at(weights_path, layer))
+
+    parametric_path = "die_kill.parametric"
+    parametric = _as_object(_require(obj, "parametric", "die_kill"),
+                            parametric_path)
+    _reject_unknown(parametric, _DIE_KILL_PARAMETRIC_KEYS, parametric_path)
+
+    return DieKillPolicy(
+        background_lot_log_sigma=_as_number(
+            _require(background, "lot_log_sigma", background_path),
+            _at(background_path, "lot_log_sigma"), minimum=0.0),
+        background_wafer_log_sigma=_as_number(
+            _require(background, "wafer_log_sigma", background_path),
+            _at(background_path, "wafer_log_sigma"), minimum=0.0),
+        defect_half_kill_size_um=_as_number(
+            _require(defect, "half_kill_size_um", defect_path),
+            _at(defect_path, "half_kill_size_um"), greater_than=0.0),
+        defect_halo_um=_as_number(
+            _require(defect, "halo_um", defect_path),
+            _at(defect_path, "halo_um"), minimum=0.0),
+        defect_layer_weights=tuple(sorted(
+            (layer, _as_number(weights_obj[layer], _at(weights_path, layer),
+                               minimum=0.0, maximum=1.0))
+            for layer in layers)),
+        parametric_kill_limit_tolerances=_as_number(
+            _require(parametric, "kill_limit_tolerances", parametric_path),
+            _at(parametric_path, "kill_limit_tolerances"), greater_than=0.0),
+        parametric_within_die_sigma=_as_number(
+            _require(parametric, "within_die_sigma", parametric_path),
+            _at(parametric_path, "within_die_sigma"), greater_than=0.0),
+        tester=_build_tester(_require(obj, "tester", "die_kill")),
+    )
+
+
 def _build_maintenance(raw: Any) -> MaintenancePolicy:
     obj = _as_object(raw, "maintenance")
     _reject_unknown(obj, _MAINTENANCE_KEYS, "maintenance")
@@ -2777,6 +3037,7 @@ def build_world(raw: Mapping[str, Any]) -> World:
         alarms=_build_alarms(_require(obj, "alarms", ""), operations, tools,
                              observation),
         die_grid=_build_die_grid(_require(obj, "die_grid", ""), products),
+        die_kill=_build_die_kill(_require(obj, "die_kill", ""), layers),
         defects=_build_defects(_require(obj, "defects", ""),
                                observation.latents,
                                observation.classifier),

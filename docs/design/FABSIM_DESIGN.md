@@ -162,9 +162,11 @@ Stage 4 of the pipeline (the physics) is built in ordered slices, each gated on 
 | **3B Fab response** | generic alarm rules on the chamber's own control limits, background false alarms, escalation into work orders, response-driven maintenance that blocks production, and one recovery machine for every maintenance event (ADR-017) | **implemented** |
 | **3C Process observation** | FDC summaries and zonal metrology from realized latent state through the declared sensitivity matrix, over the full variation stack (ADR-018) | **implemented** |
 | **3D Defects** | Poisson intensity as a mixture of physical origins with declared latent sensitivities, per-origin geometry in wafer coordinates, and a noisy classifier over the hidden origin (ADR-019) | **implemented** |
-| 3E Die + yield | die grid, kill model, bins, wafer yield | not started |
+| 3E Die + yield | die grid, kill model, bins, wafer yield | **implemented** |
 
 The boundary 3.0 holds is that it declares *machinery* and never behaviour: the alarm block states thresholds and background rates but fires nothing; the die-grid block states geometry but lays out no grid; the observation block states channels, sensitivities and confusion but computes no value. A contract that named an event, a mechanism, a tool or a chamber would have pre-committed the answer before the mechanism layer existed, so none of them has a field for one.
+
+The boundary 3E holds is not a scan but a signature: `fabsim.die.probe` is handed a timeline, the process observations and the defect population — three observable collections — and never the hidden `Realization`, so the audited `bad_tool → yield` term has no expressible form in the plane that used to carry it. Yield is the count of `PASS` bins over the count of `die_bins` rows, so there is nothing for a penalty to be subtracted from; `target_yield_pct` is a product specification the engine never reads. The chain then stops: no emitter, no database, no truth artifact, no benchmark (ADR-021).
 
 The boundary 3D holds is that the chain stops at a defect. The engine reads latent trajectories, recipes, the route and the clock, and writes inspections and defects; it reaches no die, no bin and no yield — checked by AST over identifiers *and* code strings. The hidden physical origin exists because the geometry needs it, and it lives in a separate record: the observable `Defect` has no field for it, and no `killer_flag`.
 

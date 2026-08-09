@@ -34,6 +34,8 @@ The null dataset passes the full integrity suite; leakage tests L7 (null blindne
 
 *As implemented (Step 3D), the null defect population is ordinary:* 22 defects per wafer, no spotless wafers, all five origins and all five classes present, and a background radial profile matching the uniform-over-area law to within 0.02 in every radial fifth. A null dataset with no defects — or with only background ones — would make a defect class an answer.
 
+*As implemented (Step 3E), the null fab loses die the way a fab does:* every product's realized yield sits within 1.6 points of its declared specification across three seeds, wafer-to-wafer σ is 1.1–4.4 points and lot-to-lot σ 0–2.9 (§2's budget is 2.5–3.5 and 1–1.5), no wafer is perfect, all three kill causes and all five bin codes occur in quantity, and edge die die more often than centre die *with no fault anywhere*. A null world of perfect wafers — or of wafers that all yield the same — would make any fault separable at a glance.
+
 ### A4 — Structural integrity (generator self-tests, every build)
 All invariants of `SCHEMA_V2_DESIGN.md` §4 and `TEMPORAL_MODEL.md` §6: FK closure, run/step time ordering, zero runs during DOWN/PM, inspection/metrology/test time ordering, reconciliation (defect counts, die-bin sums, state-ribbon tiling), vocabulary closure.
 
@@ -41,6 +43,8 @@ All invariants of `SCHEMA_V2_DESIGN.md` §4 and `TEMPORAL_MODEL.md` §6: FK clos
 For each fault scenario: truth `onset` lies strictly inside the horizon with ≥ 30% baseline period before it; affected-cohort series (metrology → defects → yield) depart baseline in causal order; scenario I additionally shows repair time < recovery, with residual ≈ configured (1 − recovery_fraction).
 
 *As implemented (Step 3A), the latent precondition holds:* a mechanism's trajectory is **bit-identical** to its counterfactual before the onset grid point and departs after it; a `ramp` profile climbs monotonically over its `ramp_days` and then sustains; an `edge_uniformity` activation runs through every PM in the window untouched, while a `param_bias` one is partly recentred by each. The observable ordering (metrology → defects → yield) waits for 3C–3E.
+
+*As implemented (Step 3E), the chain reaches yield:* a latent departure moves the fab's own metrology, the moved metrology raises the parametric risk of the die at the radius it moved most, and those die fail more often — verified by counterfactual subtraction on the same timeline, and confined to the wafers the affected chamber processed. Defects reach yield the other way, through physical overlap with a die footprint. What A5 still needs is the *temporal* ordering across the three observable series on a library scenario, which waits for the scenario library.
 
 *Wording change (Step 3B).* This criterion said scenario I's residual would be "≈ configured (1 − recovery_fraction)". The response engine is fab-wide and does not read a scenario's `response` block (ADR-017 §2), so the residual is **emergent** rather than configured: Beta(8, 2) gives a mean recovery of 0.8, i.e. ≈20% residual, and truth records the *realized* quality and fraction for every intervention. Read the criterion as "residual ≈ 1 − **realized** recovery fraction". Nothing is weakened — the check is now against a number the simulator actually produces.
 
@@ -62,6 +66,8 @@ On every dataset: ≥ 2 chambers per multi-chamber tool actually used; per-chamb
 
 ### A9 — Demo continuity (ADR-010) *(partly manual review)*
 **The Step 3D risk is retired; the criterion is not yet assessed.** The flaw ADR-019 §5 reported — recovery booking a permanent credit against the mean-reverting AR(1) term, leaving repaired chambers several σ from their baseline so that a fault could *reduce* their non-uniformity — is fixed by **ADR-020**. Repaired and unrepaired null chambers now sit at the same distance from their own benign offsets (rms 1.05σ against 1.06σ, from 1.67σ against 1.06σ), and the mechanism that could turn a background repair into an apparent excursion is gone. Measured alongside it, scenario B's edge-ring lift on the affected chamber rose from ×1.67 to ×1.85 at `moderate` (×1.72 → ×1.84 at `obvious`, ×1.55 → ×1.53 at `subtle`), above 1.0 in all nine seed × severity runs, with **nothing retuned** — no defect sensitivity, no channel scale, no severity reference, no world-template constant.
+
+*As implemented (Step 3E), the chain now reaches the criterion's own currency, and the measurement is small.* The die plane is continuous and monotone in severity — the affected chamber's outer-fifth parametric risk rises from 0.0065 (null) to 0.0092 (`moderate`) to 0.0115 (`obvious`) — but the resulting within-product cohort yield deficit on the baseline world at the seeds measured stays **under one point**, against this checklist's 4–10. ADR-021 records the two identified causes: at this seed the affected chamber's benign radial offset partly opposes the activation (the signed-latent consequence of ADR-018), and the parametric channel is a small share of a kill budget the background killer density dominates. Nothing was amplified to change that number, and nothing may be: the constant that would do it is the functional-limit multiple, and moving it to make a demo work is the tuning ADR-018 §4 and this criterion both forbid. It is a calibration question for the scenario-library gate — the candidates being the world's severity calibration, the chamber the demo scenario targets, and the observation model's absolute-versus-relative noise scaling.
 
 That says the physical model no longer sabotages the signature. It does **not** say A9 passes. The checklist below is end-to-end and reaches yield, die bins and wafer maps, none of which exist before 3E; the numbers above are a latent- and defect-plane measurement on one scenario at three seeds, and the criterion asks for a demo-level story. A9 stays **open** and is assessed when the chain it describes can be run.
 
@@ -91,7 +97,7 @@ The legacy surfaces are untouched: `data/generate_fab_db.py` byte-identical, leg
 - [ ] Generator self-test suite (A4) wired into every build
 - [ ] Anti-leakage suite L1–L11 + reference-query fixtures in `eval/`
 - [ ] Five library datasets generated deterministically in CI
-- [ ] pytest coverage: rng substreams, routing, mechanism math, kill model, invariants
+- [x] pytest coverage: rng substreams, routing, mechanism math, kill model, invariants — *the generation planes; the emit/benchmark surfaces below remain open*
 - [ ] `scenarios/README.md` maintainers' index (id ↔ slug ↔ answer summary)
 - [ ] Documentation updates confined to: this design set marked "as implemented" deltas, README pointer to fabsim (no claims beyond what A1–A11 prove)
 

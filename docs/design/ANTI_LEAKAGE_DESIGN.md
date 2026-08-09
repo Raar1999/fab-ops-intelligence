@@ -94,6 +94,16 @@ The defect plane is where the audit found the tightest loop — a defect's type 
 
 Static guards: the engine names no mechanism, event, scenario, severity, counterfactual or entity; reaches no die, bin or yield identifier *or code string*; and opens no file.
 
+## 3.5 What Step 3E added: the audited term has nowhere to be written
+
+`wafer_yield` is where the audit found `−0.08 if bad_tool`. The successor is not a better-guarded formula; it is a different shape of function (ADR-021):
+
+- **The kill model is not shown the hidden plane.** `probe(timeline, observations, population)` receives three *observable* collections. There is no `Realization` parameter, so latent state, mechanism records, distractor records, the counterfactual series and the hidden defect origin are unreachable — not unread. Every earlier plane could reach the hidden plane and was held back by a scan; this one is held back by its signature, and a test pins the parameter list.
+- **Yield is a count, not a quantity.** `total_die` is the number of `die_bins` rows, `good_die` the number of `PASS` ones, `yield_pct` their quotient. There is no term to add a penalty to, and no scenario-specific expected value anywhere. `target_yield_pct` is a product *specification* the engine never reads — a test scans for it by name — and the background killer density was calibrated against the **null world** rather than against a benchmark, a diagnosis result or a legacy number.
+- **A new static rule, stronger than the name scans.** Every string constant that a comparison in `die.py` tests against must be declared vocabulary: a coverage state, the partial-die policy, an operation type. A branch on a tool, a chamber, a mechanism or a scenario name cannot be written without failing a test — which is the mutation that was tried, along with a chamber-keyed penalty carrying no literal at all. The literal one was caught lexically; the chamber-keyed one was caught by the null-world plausibility and healthy/affected overlap tests, which is the pair of guards that has to work when a lexical scan cannot.
+- **The spatial signature is geometry both ways.** Edge die die more often than centre die *in the null world* — the benign radial term reaches them and edge-ring defects land on them. A gradient that appeared only under a fault would be the fingerprint; one that is always there is a background an analyst has to see past.
+- **The hidden cause is a separate record.** `DieBin` carries a position and a bin code: no cause, no killer flag. A bin is drawn through a symptom row, every cause reaches more than one bin and every bin arises from more than one cause, so the observable plane cannot be read back into the kill model — the same property the defect classifier has (D3/T4).
+
 ## 4. Process rules (human-side leakage)
 
 1. New mechanisms/scenarios must ship with their L-suite expectations before merging.

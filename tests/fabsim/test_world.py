@@ -12,6 +12,7 @@ found and what this slice exists to prevent.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ import pytest
 from fabsim.world import (
     CHANNEL_KINDS,
     CONTRACT,
+    DIE_KILL_CAUSES,
     LATENT_FAMILIES,
     MAGNITUDE_LEVELS,
     MECHANISM_DEFAULT_KEYS,
@@ -798,6 +800,165 @@ def test_rejects_a_die_that_does_not_fit_its_wafer(make_template):
 
 def test_the_die_geometry_is_deterministic(template):
     assert build_world(template).die_grid == build_world(template).die_grid
+
+
+# ---------------------------------------------------------- die-kill contract
+
+
+def test_the_baseline_declares_a_die_kill_model(world):
+    """§5's three competing risks, and the tester that describes them."""
+    policy = world.die_kill
+    assert policy.background_lot_log_sigma > 0.0
+    assert policy.background_wafer_log_sigma > 0.0
+    assert policy.defect_half_kill_size_um > 0.0
+    assert policy.defect_halo_um >= 0.0
+    assert policy.parametric_kill_limit_tolerances >= 1.0
+    assert 0.0 < policy.parametric_within_die_sigma < 1.0
+    assert dict(policy.defect_layer_weights).keys() == set(world.layers)
+    assert all(0.0 <= weight <= 1.0
+               for _layer, weight in policy.defect_layer_weights)
+
+
+def test_every_product_declares_its_own_killer_density(world):
+    """`p_bg` is per product (rule D6 keys by product), and it is a *separate*
+    number from `defect_scale`: a scanner reports only what its threshold can
+    see at the layers it scans, and a wafer's killers are mostly the ones it
+    never reported."""
+    densities = {p.product_name: p.killer_density_per_mm2
+                 for p in world.products}
+    assert all(value > 0.0 for value in densities.values())
+    assert len(set(densities.values())) > 1
+    scales = {p.product_name: p.defect_scale for p in world.products}
+    assert densities != scales
+
+
+def test_the_functional_limit_is_wider_than_the_control_limit(world):
+    """A control tolerance is where a fab intervenes; a die stops working
+    further out. Conflating the two would turn ordinary process control into
+    a yield cliff, and would make the null world's own spread lethal."""
+    assert world.die_kill.parametric_kill_limit_tolerances > 1.0
+
+
+def test_the_tester_vocabulary_is_closed_and_fully_reachable(world):
+    """Every cause has a symptom row, every bin is reachable, and no row is a
+    partition of the truth (rule D2)."""
+    tester = world.die_kill.tester
+    assert tester.pass_code == "PASS"
+    assert tester.pass_code not in tester.fail_codes
+    assert set(tester.codes) == {"PASS"} | set(tester.fail_codes)
+    reachable = set()
+    for cause in DIE_KILL_CAUSES:
+        row = dict(tester.row(cause))
+        assert set(row) == set(tester.fail_codes), cause
+        assert sum(row.values()) == pytest.approx(1.0)
+        assert max(row.values()) < 0.95, cause      # never a label
+        assert sum(1 for w in row.values() if w > 0.0) > 1, cause
+        reachable |= {code for code, w in row.items() if w > 0.0}
+    assert reachable == set(tester.fail_codes)
+
+
+def test_the_kill_model_is_keyed_by_nothing_that_names_an_entity(world,
+                                                                 template):
+    """Rule D6, on the newest block: layer, product and cause are the only
+    keys, and none of them can name a tool, a chamber, an event or a
+    mechanism."""
+    raw = json.dumps(template["die_kill"])
+    for name in [t["name"] for t in template["tools"]]:
+        assert name not in raw
+    for name in ("chamber", "mechanism", "event", "scenario", "severity",
+                 "suspect", "onset", "fault"):
+        assert name not in raw
+
+
+@pytest.mark.parametrize("overrides, path", [
+    ({"background": {"lot_log_sigma": -0.1, "wafer_log_sigma": 0.1}},
+     "die_kill.background.lot_log_sigma"),
+    ({"background": {"lot_log_sigma": 0.1}},
+     "die_kill.background.wafer_log_sigma"),
+    ({"background": {"lot_log_sigma": 0.1, "wafer_log_sigma": 0.1,
+                     "drift": 1.0}}, "die_kill.background"),
+    ({"parametric": {"kill_limit_tolerances": 0.0,
+                     "within_die_sigma": 0.25}},
+     "die_kill.parametric.kill_limit_tolerances"),
+    ({"parametric": {"kill_limit_tolerances": 3.0,
+                     "within_die_sigma": 0.0}},
+     "die_kill.parametric.within_die_sigma"),
+    ({"exponent": 2.0}, "die_kill"),
+])
+def test_rejects_an_invalid_die_kill_model(make_template, overrides, path):
+    raw = make_template()
+    raw["die_kill"].update(overrides)
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("mutate, path", [
+    (lambda d: d["defect"]["layer_weights"].pop("METAL"),
+     "die_kill.defect.layer_weights.METAL"),
+    (lambda d: d["defect"]["layer_weights"].update({"POLY": 0.5}),
+     "die_kill.defect.layer_weights.POLY"),
+    (lambda d: d["defect"]["layer_weights"].update({"GATE": 1.5}),
+     "die_kill.defect.layer_weights.GATE"),
+    (lambda d: d["defect"].update({"half_kill_size_um": 0.0}),
+     "die_kill.defect.half_kill_size_um"),
+    (lambda d: d["defect"].update({"halo_um": -1.0}),
+     "die_kill.defect.halo_um"),
+])
+def test_rejects_an_invalid_defect_kill_term(make_template, mutate, path):
+    raw = make_template()
+    mutate(raw["die_kill"])
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("mutate, path", [
+    (lambda t: t["confusion"].pop("parametric"),
+     "die_kill.tester.confusion.parametric"),
+    (lambda t: t["confusion"].update({"chamber_fault": {"OTHER": 1.0}}),
+     "die_kill.tester.confusion.chamber_fault"),
+    (lambda t: t["confusion"]["defect"].update({"MELTED": 0.0}),
+     "die_kill.tester.confusion.defect.MELTED"),
+    (lambda t: t["confusion"]["defect"].update({"OTHER": 0.5}),
+     "die_kill.tester.confusion.defect"),
+    (lambda t: t.update({"pass_code": "OPEN_SHORT"}),
+     "die_kill.tester.pass_code"),
+])
+def test_rejects_an_invalid_tester_model(make_template, mutate, path):
+    raw = make_template()
+    mutate(raw["die_kill"]["tester"])
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_rejects_a_bin_no_cause_can_reach(make_template):
+    """A bin that only appears when one specific thing happened would be a
+    fingerprint, so an unreachable code is a rejection rather than dead
+    vocabulary."""
+    raw = make_template()
+    tester = raw["die_kill"]["tester"]
+    tester["fail_codes"] = tester["fail_codes"] + ["MYSTERY"]
+    with pytest.raises(WorldTemplateError, match="cannot be reached"):
+        build_world(raw)
+
+
+@pytest.mark.parametrize("value, path", [
+    (0.0, "products[0].killer_density_per_mm2"),
+    (-1.0, "products[0].killer_density_per_mm2"),
+    ("0.004", "products[0].killer_density_per_mm2"),
+])
+def test_rejects_an_invalid_killer_density(make_template, value, path):
+    raw = make_template()
+    raw["products"][0]["killer_density_per_mm2"] = value
+    with pytest.raises(WorldTemplateError) as excinfo:
+        build_world(raw)
+    assert excinfo.value.path == path
+
+
+def test_the_die_kill_model_is_deterministic(template):
+    assert build_world(template).die_kill == build_world(template).die_kill
 
 
 # ------------------------------------------------ observation configuration
