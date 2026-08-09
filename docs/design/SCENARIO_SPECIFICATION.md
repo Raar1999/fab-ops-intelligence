@@ -158,7 +158,7 @@ Common world: `baseline_fab_v1` — 6 products, 1 flow (14 steps), 15 tools (3 e
 - **Hidden truth:** mechanism, chamber, onset day 35, ramp 7 days, severity moderate, realized affected run/wafer list with per-wafer exposure, repair time, recovery fraction.
 - **Temporal behavior:** baseline (35 d) → ramp (7 d) → sustained fault → alarm(s) → repair (≈ day 55–60) → partial recovery (≈ 80% of the shift removed).
 - **Affected entities:** one chamber; wafers whose gate-etch or metal-etch runs used it during the window (routing makes this a *changing subset*, not a fixed 50%).
-- **Expected evidence:** chamber-grain yield split (≈ 4–8 pts, vs σ≈3 wafer noise), elevated edge-zone defect share, edge-site CD deviation, temporal alignment of all three with the window, repair→improvement.
+- **Expected evidence:** chamber-grain yield split (≈ 4–8 pts, vs σ≈3 wafer noise — *measured unreachable; the parametric channel's whole budget on a healthy fab is 0.80 yield points and the audited v1's own mediated remainder was 3.7. Left as written, annotated, per `CAUSAL_MECHANISM_MODEL.md` §8 and ADR-026 §7*), elevated edge-zone defect share, edge-site CD deviation, temporal alignment of all three with the window, repair→improvement.
 - **Diagnostic challenge:** attribute to the *chamber*, not the tool as a whole and not the co-routed products; localize onset within a few days.
 - **Benchmark purpose:** attribution precision at chamber grain; onset error; the ADR-010 continuity anchor (`demo_etch02` successor).
 

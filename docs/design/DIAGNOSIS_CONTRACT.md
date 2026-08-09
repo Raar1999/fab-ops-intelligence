@@ -132,18 +132,44 @@ against a specific scenario's answer. `fabeval` gains one adapter that reads
 an `Investigation` and joins it to truth on `dataset_id`; that adapter is
 evaluator code, not engine code.
 
-**One measured warning for whoever implements the scoring.** The benchmark
-gate measured what a *single* reference query can do, and it is less than the
-acceptance documents assume: at `moderate` severity, scenario B's planted
-chamber reaches 2.65σ on edge-site CD against a natural-variation floor of
-2.84σ (the worst chamber on three null worlds). No single channel separates a
-moderate fault from a healthy fab's own worst chamber. That is by design —
-rule F11 puts benign offsets in the subtle-severity band and says the
-difference is "only by shape in time" — but it means an engine that ranks
-chambers on one statistic will score at chance on the null. The evidence that
-exists is *multi-channel and temporal*, and the engine has to combine it.
-That is the actual problem to solve, and it is why the benchmark was built
-first.
+**One measured warning for whoever implements the scoring, corrected.** The
+A9/A6 review gate reported that at `moderate` severity scenario B's planted
+chamber reaches 2.65σ on edge-site CD against a "natural-variation floor" of
+2.84σ, and concluded that an engine ranking chambers on one statistic "will
+score at chance on the null". **The conclusion was wrong and the calibration
+gate that followed measured why** (ADR-026): that floor is the worst of seven
+chambers across three worlds, and comparing one specified chamber against a
+maximum over twenty-one is not a comparison an engine has to lose. Against the
+reference an engine would actually use — the null's own *per-chamber*
+distribution, over 84 chamber-seeds — the planted chamber sits at:
+
+```
+                  edge_cd   edge_defect_share   alarms   yield_split
+subtle  (1.61 s)   0.167          0.143          0.059      0.429
+moderate(3.22 s)   0.060          0.095          0.018      0.405
+obvious (4.00 s)   0.036          0.131          0.023      0.405
+```
+
+So a single channel *does* carry signal at `moderate` — p = 0.060 on edge CD,
+p = 0.018 on alarms — and the ladder is monotone on both. Three things follow
+for the engine, and they are the reason this correction matters more than the
+number does:
+
+* **Calibrate against the null's per-chamber distribution, never against its
+  worst chamber.** The second is an order statistic that diverges with the
+  number of null worlds you build; a threshold read off it is a threshold that
+  measures your budget. This is §8.2's open decision, and it now has a
+  measured direction.
+* **One channel is not enough even though one channel is not nothing.** At
+  p ≈ 0.06 per channel, an engine that ranks seven chambers on edge CD alone
+  will name the wrong one often. Yield in particular carries *no* severity
+  information at these magnitudes (p ≈ 0.41 at every rung) and must not be
+  weighted as though it did.
+* **The multi-channel, temporal conclusion stands and is better supported.**
+  Rule F11 still puts benign offsets in the subtle band, a benign chamber and
+  a subtle fault still differ "only by shape in time", and combining evidence
+  across channels and across the window is still the actual problem to solve.
+  That is why the benchmark was built first.
 
 ## 6. Anti-leakage checks the engine must pass
 

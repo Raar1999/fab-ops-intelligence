@@ -88,6 +88,8 @@ Severity is defined in units of the natural variation of the **weekly aggregated
 
 Per-wafer effects are correspondingly much smaller than v1's 4σ single-GROUP-BY giveaway. Expected demo (moderate) outcome: affected-chamber cohort ≈ 4–8 pts yield deficit vs σ≈3 wafer noise, elevated edge-zone defect share (≈ 35% vs 22% baseline, overlapping distributions), visible `cd_nm_edge`/`cd_nm_sigma` shift — three convergent mediated channels, none individually deterministic. Calibration is verified by acceptance tests (reference-query recoverability at moderate/obvious; near-floor at subtle), so tuning is measured, not aesthetic.
 
+> **The "≈ 4–8 pts" in the paragraph above is measured to be unreachable, and it is the same number as `PHASE_1_ACCEPTANCE.md` A9's "4–10 pts" and `SCENARIO_SPECIFICATION.md` §4 B's "≈ 4–8 pts".** All three trace to `docs/audit/SYNTHETIC_DATA_AUDIT.md` #5, whose decomposition is decisive: of the audited ETCH-02's ~12-point deficit, 8.0 points were the direct `−0.08 if bad_tool` label effect and **only ~3.7 points flowed through defects** — below the band's own floor. The channel that would have to carry it in FabSim disposes of **0.80 yield points in total on a healthy fab** (ADR-026 §7). The number is left here rather than deleted, because deleting it would be weakening a criterion rather than resolving it; the decision that retires or restates it belongs to an architecture gate. Nothing was tuned toward it, and ADR-004's prohibition means nothing may be. *The rest of §8 — the σ ladder itself — is separately measured and holds; see ADR-026 §5.*
+
 ## 9. Phase 1 mechanism library
 
 | Mechanism | Latent target | Observable footprint (all mediated) | Used by scenario |

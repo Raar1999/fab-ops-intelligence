@@ -127,6 +127,26 @@ L7's implementation reads "below the subtle-severity floor" as a fixed 2.5σ, an
 
 **Nothing was changed to make it pass** — not the floor, not the world, not the null's seed count back down to one. `A7` is therefore **BLOCKED** rather than PARTIAL, `test_l7_fails_on_the_null_at_two_of_three_seeds` pins the measurement so it cannot quietly regress in either direction, and the finding is recorded in ADR-025 §5 with the open question it raises: whether the benign chamber-to-chamber spread this world carries by design (F10/F11) is larger than the subtle severity rung was calibrated to sit above. That is the same overlap L6 passes on and the same one A6's sweep ran into, seen a third time; it is a calibration decision, and it needs its own gate.
 
+## 3.7 The calibration gate's answer: L7 is measuring its own construction
+
+That gate ran, and the open question above is answered **no** — the spread is not the problem, and the comparison that raised it is between a maximum and a point. Recorded in **ADR-026**; four measurements, none of which changed a line of the simulator.
+
+**L7 reduces a null world to `max over chambers |leave-one-out z|` and compares it against a hardcoded 2.5.** For the seven chambers the etch-grain reference queries report at, that maximum under *perfect exchangeability* — chambers differing by nothing whatsoever — has median 2.687 and exceeds 2.5 with probability **0.598**. L7 evaluates three such channels and fails if any trips. Its expected failure rate on a **correct** null world is therefore near 0.9, and the measured rate over twelve fault-free worlds is **10 of 12**:
+
+| null seeds built | 3 (the A9/A6 gate) | 12 (this gate) |
+|---|---|---|
+| L7 failures | 2 | 10 |
+| worst chamber, edge CD | 2.84 | 5.38 |
+| worst chamber, edge-defect share | 3.29 | 5.24 |
+
+The 2-of-3 the table in §3.6 reports is the modal outcome of a healthy fab, not evidence about one.
+
+**The world carries no excess benign structure.** Pooled per-chamber |z| over the twelve nulls against the exchangeable-Gaussian reference: edge CD 1.129, edge-defect share 1.124, yield split 1.084, alarms 0.891 — against 1.123 (and 0.895 at seventeen chambers). This world is, if anything, marginally quieter than exchangeable. F10/F11's offsets are doing exactly what §3.1 says they do and no more.
+
+**No world constant can move it, and that is arithmetic rather than an experiment.** `zscore` divides by the realized between-chamber spread, so it is invariant under any common positive rescaling *and* any shift of the per-chamber scores; the chambers are exchangeable by F10/F11; so the null distribution of `max|z|` is a function of the chamber count and of nothing the world declares. Measured across six calibrations spanning 16× in benign latent offset and 20× in observation-plane chamber offset, fourteen of eighteen fault-free worlds fail L7, and a *fifth* of the declared benign chamber variation fails exactly as often as the baseline.
+
+**What this does not license.** The threshold was not lowered, the seed count was not reduced, and no simulator constant was touched. L7's *intent* — the reference queries must not find a fault where there is none, leakage class T5 — is sound and unmet by its current form; giving it a form that converges means deciding what it compares, which ADR-026 records as three options for an architecture gate rather than settling here. `tests/fabeval/test_floor_semantics.py` pins the reference distribution, the divergence, the scale-invariance and the null's exchangeability in arithmetic that needs no dataset, so the diagnosis survives between gates.
+
 ## 4. Process rules (human-side leakage)
 
 1. New mechanisms/scenarios must ship with their L-suite expectations before merging.

@@ -320,3 +320,129 @@ The difficulty axis exists — realized severity rises 1.61 → 3.22 → 4.00 an
 **6. Diagnosis stops at the design gate, because its contract did not exist.** ADR-003 states the rule, ADR-005 that evaluation gates the claim, ADR-007 that statistics precede ML, ADR-008 names an output artifact — but nothing said what the engine is handed, what it returns, or how a conclusion is scored. `docs/design/DIAGNOSIS_CONTRACT.md` now says: the entry point takes a **path to `fab.db`** and nothing else (a dataset directory would put `truth/` one join away); the output is a ranked set of candidates each carrying falsifiable evidence, a mandatory `considered[]` of rejected hypotheses, and `insufficient_evidence` as a first-class answer; five static checks and one runtime invariance test (rewrite every hidden record, leave `fab.db` byte-identical, the report must not move) are specified. Five open decisions — the score's definition, the abstention threshold, the onset statistic, the artifact's schema name, and where the package lives — are recorded rather than guessed, because guessing them is the architecture-invention this gate forbids.
 
 *What changed in code.* `fabeval` gained `sweep.py` and a sweep-aware `check_a6`; `build_library` now builds the null at three seeds so the floor has more than one draw; `evaluate` scores the leakage suite on every row rather than on seed 42's. Nothing under `src/fabsim/` or `src/fabops/` was touched, no threshold was moved, and no check was relaxed. Two criteria moved, both downward and both on measurement: **A6 stays PARTIAL with a measured reason instead of an unbuilt one, and A7 drops from PARTIAL to BLOCKED.**
+
+*Superseded in part by ADR-026.* Findings 1, 2 and 3 stand. Findings 4 and 5 stand as *measurements* and are wrong in their *diagnosis*: the open question §5 states — whether this world's benign chamber-to-chamber spread is larger than the `subtle` rung was calibrated to sit above — is measurably answered **no**, and the comparison that raised it turns out to be between a maximum and a point. ADR-026 records what A6's floor and L7's threshold actually compute.
+
+## ADR-026 — A6's floor and L7's threshold measure an order statistic, not the fab; the severity ladder is calibrated and A9's band is unreachable through the channel that has to carry it
+
+**Status: Accepted (2026-08-09), from the benchmark validity / calibration resolution gate.** ADR-025 closed with one open question and called it a world-calibration decision needing its own gate. This is that gate. **No simulator code was changed, no threshold was moved, no acceptance criterion was rewritten, and no verdict was upgraded** — because the answer is that there was nothing in the simulator to change. Seven findings.
+
+**1. What A6's floor and L7's threshold actually compute.** Both reduce a fault-free world to `max over chambers of |leave-one-out z|`, and both compare it against a number that means *one chamber's standing*:
+
+```
+fabeval.sweep.natural_variation_floor   max over null seeds ( max over chambers |z| )
+                                        ...compared against the planted chamber's z at moderate
+fabeval.leakage.l7_null_blindness       max over chambers |z|, per null
+                                        ...compared against a hardcoded 2.5
+```
+
+A maximum over *N* exchangeable draws exceeds a single draw by an amount that is a property of *N*. Neither comparison is a statement about the fab, and both would return the same verdict on a simulator of any quality.
+
+**2. The reference distribution, computed rather than argued.** For seven exchangeable chambers — the count every etch-grain reference query reports at — under the leave-one-out z these queries use:
+
+```
+E[max|z|] 2.995    median 2.687    p90 4.347    p95 5.180
+P(max|z| > 2.50) = 0.598     <- L7's threshold
+P(max|z| > 2.65) = 0.519     <- scenario B at moderate, on edge CD
+P(max|z| > 2.84) = 0.429     <- the three-seed floor A6 was read against
+```
+
+L7 evaluates three such channels and fails if any trips, so its expected failure rate on a **correct** null world is near 0.9. Measured over twelve fault-free worlds: **L7 fails on 10 of 12** (83%). The 2-of-3 ADR-025 §5 reported is the modal outcome of a healthy fab, not evidence about one.
+
+**3. The null world is not over-dispersed; it is exchangeable to three decimal places.** Pooled per-chamber |z| over twelve null realizations, against the exchangeable-Gaussian reference:
+
+```
+                     measured mean   reference   measured p90   reference p90
+edge_cd                  1.129         1.123         2.28           2.38
+edge_defect_share        1.124         1.123         2.27           2.38
+yield_split              1.084         1.123         2.15           2.38
+alarms  (n = 17)         0.891         0.895         1.59           1.86
+```
+
+If anything this world is marginally *quieter* than perfect exchangeability. There is no excess benign structure to find, and ADR-025 §5's hypothesis is false. Its sentence "on a fault-free world a benign chamber stands out more than a subtle fault does" is true of every possible world, including one with no benign variation at all, because it compares a maximum to a point.
+
+**4. There is no calibration lever, and that is provable before it is measured.** `zscore` standardizes by the realized between-chamber spread, so it is invariant under any common positive rescaling *and* any shift of the scores; F10/F11 make the chambers exchangeable; therefore the null distribution of `max|z|` depends on the chamber count and the shape of the per-chamber statistic and on **no magnitude the world declares**. Measured to confirm it — eighteen fault-free worlds over six world calibrations, spanning 16× in the benign latent offset and 20× in the observation-plane chamber offset:
+
+```
+world calibration                    L7 failures / 3 null seeds
+baseline                                      2
+benign latent offsets       x0.25             2
+benign latent offsets       x4                3
+observation chamber_offset  x0.2              2
+observation chamber_offset  x4                3
+severity_reference          x2                2
+```
+
+A fifth of the declared benign chamber variation fails exactly as often as the baseline; fourteen of the eighteen worlds fail. The parameters ADR-025 named as candidates — benign offset scale, chamber variation scale, severity reference — cannot move these criteria, and neither can any other. **This is why nothing under `src/fabsim/` was touched: not restraint, arithmetic.**
+
+**5. Read against a reference that converges, the severity ladder is calibrated as designed.** The like-for-like comparison is the planted chamber against the null's own *per-chamber* distribution — one specified chamber against unspecified single chambers. Tail probability of the null per-chamber |z| at or above the planted chamber's standing (84 chamber-seeds on the etch-grain channels, 219 on alarms):
+
+```
+                  edge_cd   edge_defect_share   alarms   yield_split
+subtle  (1.61 s)   0.167          0.143          0.059      0.429
+moderate(3.22 s)   0.060          0.095          0.018      0.405
+obvious (4.00 s)   0.036          0.131          0.023      0.405
+```
+
+`CAUSAL_MECHANISM_MODEL.md` §8 defines `subtle` as "near the detection floor" and `moderate` as "detectable with competent statistics". Subtle sits at p ≈ 0.14–0.17 on the channels the mechanism drives; moderate reaches p = 0.060 on edge CD and p = 0.018 on alarms, monotone in severity on both. **That is the specified ladder, met.** The world does not need recalibrating, and A6's difficulty-axis half was never the half in doubt.
+
+Yield is the exception, and it is a real physical result rather than a measurement artefact: the planted chamber's yield split sits at p ≈ 0.41 at every rung and does not move with severity at all. §7 is why.
+
+**6. A6's floor cannot converge, so the verdict it yields is a function of the evaluator's budget.** The floor is a cumulative maximum: it rises monotonically with the number of null realizations and has no limit. Measured on the real world as null seeds are added:
+
+```
+null seeds            1      3      5      8     12
+edge_cd             2.31   2.84   5.38   5.38   5.38
+edge_defect_share   1.82   3.29   3.29   4.08   5.24
+alarms              2.50   5.05   5.05  13.08  13.08
+yield_split         2.26   2.26   2.53   3.02   3.59
+```
+
+ADR-025 §4 raised `MINIMUM_FLOOR_SEEDS` from 1 to 3 because a one-seed floor had reported A6 as PASS, and recorded the refusal as a guard against a floor "that would flatter whatever it is compared against". The guard is right about the direction and wrong about the cure: three draws do not stabilise a divergent statistic, they move it one step along a sequence with no limit. `separated_at_moderate` is empty at three seeds, empty at twelve, and would be empty at any larger number for a simulator of any quality. **The number was not lowered and the seed count was not reduced** — either would restore a green by unlearning the measurement, which is what ADR-025 rightly refused.
+
+  The divergence is in the *aggregation across seeds*, not in the per-world statistic, which is worth stating because it narrows what the next gate has to decide. Taking the **same** per-world maxima and averaging them instead of maximizing over them is stable at every budget, while the maximum runs away:
+
+```
+seeds per floor        3      12      48
+max  (as implemented)  3.98   5.54    7.56
+mean                   3.01   3.01    3.02
+```
+
+That does not make `mean` the right answer — a mean of maxima is still a maximum-flavoured quantity, and §5's per-chamber reference is the more defensible reading of "the natural-variation floor". It does show the floor's instability is a choice rather than a property of the fab.
+
+**7. A9, verified independently, with an upper bound that needs no sweep.** Re-probing the realized world under hypothetical functional limits reproduces ADR-025 §2's conclusion and strengthens it. The measurement that settles it needs no hypothetical at all — the hidden `DieOutcome` causes on the null at the current limit:
+
+```
+null_baseline@42, 897,725 die     pass 87.440 %   background 11.127 %
+                                  defect 0.634 %  parametric  0.799 %
+```
+
+**The parametric channel's entire share of a healthy fab's die loss is 0.80 yield points.** A9 asks for a 4–10 point *incremental* within-product cohort deficit through that channel. A fault that killed every parametrically-vulnerable die in its cohort and left the control untouched could not reach one point. The band is over-subscribed by a factor of five before any question of tuning arises.
+
+The full re-probe (each row redraws every die, so each carries ≈ ±0.4 pts of cohort sampling error) confirms it and shows what reaching for the band would cost:
+
+```
+limit (tolerances)   null parametric loss   null yield   B cohort delta   B yield
+3.0 (current)               0.799 %           87.43 %       +0.428 pts    87.42 %
+2.5                         1.772 %           86.63 %       +0.702        86.60 %
+2.0                         4.134 %           84.70 %       +1.363        84.59 %
+1.5                         8.590 %           81.09 %       +1.586        80.75 %
+1.2                        12.284 %           78.16 %       +0.258        77.48 %
+1.0                        15.783 %           75.31 %       -1.914        74.27 %
+```
+
+Positive is a *surplus*: the exposed cohort out-yields its within-product peers at every setting down to 1.2, and only at 1.0 — where a healthy fab has lost 15.8% of its die and yields 75% — does a deficit appear at all, reaching 1.9 points against a 4-point floor. The as-built cohort delta is **+0.4281 pts**, matching the truth artifact's own `expected_impact` exactly, and it is *flat across the ladder* (+0.466 / +0.428 / +0.409 at subtle / moderate / obvious) against a cohort standard error of 0.11–0.46 points. The yield channel carries no severity information at these magnitudes; it is measuring the chamber's benign character and nothing else.
+
+  **The documentary contradiction, stated once more with its provenance.** The band is not A9's alone: it appears as "4–10 pts" in `PHASE_1_ACCEPTANCE.md` A9, and as "≈ 4–8 pts" in `CAUSAL_MECHANISM_MODEL.md` §8 and `SCENARIO_SPECIFICATION.md` §4 B. All three trace to `docs/audit/SYNTHETIC_DATA_AUDIT.md` #5, and that entry contains the decisive number: *"of ETCH-02's ~12-pt deficit, **8.0 pts are this direct label effect, only ~3.7 pts flow through defects**."* The audited v1's own **mediated** remainder was 3.7 points — below the band's own 4-point floor. The band was therefore never reachable through mediation *in the system it was measured from*; it is the magnitude of the `−0.08 if bad_tool` term ADR-004 exists to abolish, and requiring FabSim to reproduce it is requiring the defect back.
+
+**What this gate changed, and what it deliberately did not.** Changed: this ADR, the status paragraphs in the five design documents the findings touch, and one new test module (`tests/fabeval/test_floor_semantics.py`) that pins the reference distribution, the divergence, the scale-invariance and the null's exchangeability — arithmetic that needs no dataset, so the finding cannot be lost between gates. Not changed: `src/fabsim/`, `src/fabops/`, `src/fabeval/`, every threshold, every world constant, every verdict. **A6 stays PARTIAL, A7 stays BLOCKED, A9 stays BLOCKED.**
+
+Correcting A6 and L7 means choosing what they should compare instead, and that is an architecture decision this gate is not entitled to take — the same discipline ADR-025 applied to A9. The options, recorded so the next gate chooses rather than invents:
+
+1. **Score the planted chamber against the null's per-chamber distribution** (§5's table), which converges, is like-for-like, and is what "effect size below the subtle-severity floor" means when both sides are single chambers. Needs a declared quantile and a declared minimum null sample.
+2. **Score maximum against maximum** — the family-wise form: a faulted world's worst chamber against the *distribution* of a null world's worst chamber. Answers a different and also legitimate question ("would an analyst who does not know where to look find it?"), and is strictly harder.
+3. **Restate L7 as a false-positive rate over a null population** rather than a per-world assertion, which is what the leakage taxonomy's T5 actually asks for.
+
+A9's three options are unchanged from ADR-025 §3, with one addition this gate's §7 supports: any restatement of the band should be derived from the parametric channel's measured budget rather than from the legacy cohort gap.
+
+**Diagnosis remains blocked.** `DIAGNOSIS_CONTRACT.md` §5's measured warning was read off the defective comparison and is corrected there: an engine ranking chambers on one statistic does **not** score at chance on the null — moderate reaches p = 0.018 on alarms and p = 0.060 on edge CD. The contract's *conclusion* is unaffected and better supported: the evidence is multi-channel and temporal, no single channel is decisive, and §8's five open decisions still have to be made before an engine is written.
