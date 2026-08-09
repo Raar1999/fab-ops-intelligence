@@ -576,17 +576,30 @@ def test_an_unrelated_alarm_rule_does_not_reshuffle_the_others(make_template,
     (PARTICLE_EVENT, "particle_load"),
 ])
 def test_a_larger_departure_is_noticed_more_often(world, event, latent):
-    """Monotone in severity, measured against the null and nothing else."""
+    """Monotone in severity, measured against the null and nothing else.
+
+    Counted over **three seeds** rather than one. A single realization's count
+    is a small integer that the fab's own feedback loop bounds from above: a
+    departure large enough to alarm escalates into a repair, the repair takes
+    it back down, and the refractory window caps what is left at roughly one
+    complaint a day either way. Moderate and obvious therefore sit within each
+    other's noise at any one seed, and a test that pinned one seed's ordering
+    would be pinning that seed. Pooling triples the evidence and asserts the
+    same property — strictly, and at both steps of the ladder.
+    """
     chamber = target_chamber(world, event)
     onset = event["onset_day"] * MINUTES_PER_DAY
     counts = []
     for severity in ("subtle", "moderate", "obvious"):
-        response = responded(world, events=[dict(event, severity=severity)])
-        counts.append(sum(1 for a in response.alarms
-                          if a.chamber_id == chamber and a.minute >= onset
-                          and response.detail(a.alarm_id).kind == "condition"))
-    assert counts[0] <= counts[1] <= counts[2]
-    assert counts[2] > counts[0]
+        total = 0
+        for seed in (7, 42, 101):
+            response = responded(world, default_seed=seed,
+                                 events=[dict(event, severity=severity)])
+            total += sum(1 for a in response.alarms
+                         if a.chamber_id == chamber and a.minute >= onset
+                         and response.detail(a.alarm_id).kind == "condition")
+        counts.append(total)
+    assert counts[0] < counts[1] < counts[2], counts
 
 
 def test_a_subtle_fault_stays_near_the_null_floor(world, null):

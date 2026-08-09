@@ -37,6 +37,11 @@ from fabsim.latent import (
     realize,
     realize_scenario,
 )
+#: The recovery decomposition is arithmetic, and the honest place to test
+#: arithmetic is directly on it: a whole-fab realization can only show that
+#: the sum came out right, never that the two terms were separated for the
+#: right reason. Imported privately and used only in that section.
+from fabsim.latent import _LatentState
 from fabsim.rng import stream
 from fabsim.scenario import from_mapping
 from fabsim.timeline import simulate_scenario
@@ -730,6 +735,374 @@ def test_some_repairs_achieve_nothing(realization, world):
     worked = [r.quality for r in events.values() if not r.no_fix]
     assert 0.6 < st.mean(worked) < 0.95      # Beta(8, 2) has mean 0.8
     assert max(worked) < 1.0                 # never a perfect restoration
+
+
+# ------------------------------------------------- the recovery decomposition
+#
+# ADR-020. Until it, maintenance booked a permanent credit against the whole
+# of `value - offset`, and `value - offset` contains the *mean-reverting* AR(1)
+# wander. Cancelling a transient permanently biases the chamber the other way,
+# and a chamber that was merely unlucky enough to be repaired drifted several σ
+# from its own baseline in a world where nothing was wrong. Because the defect
+# plane reads |edge_uniformity| as a magnitude, that turned a background repair
+# into something a diagnosis engine could mistake for a process excursion.
+#
+# The corrected model separates a latent's *persistent* departure (a mechanism
+# drive plus whatever standing correction maintenance has booked) from its
+# self-correcting natural wander, and says which of the two each kind of work
+# acts on: a PM cleans or recalibrates, so it acts on everything it can read; a
+# repair restores, so it acts on the persistent part alone.
+
+
+def _late_distance(realization, world, latent):
+    """Final-week mean minus the benign offset, in the latent's weekly σ.
+
+    A standardized quantity by construction: `severity_reference` *is* the σ of
+    a healthy chamber's weekly-mean latent, and
+    `test_the_declared_severity_reference_matches_the_null_world` holds the
+    declaration to what the null world actually does. So "how far from its own
+    baseline did this chamber end up?" is measured in the design's own natural
+    scale rather than in a threshold picked to make a result come out.
+    """
+    grid = realization.grid
+    late = grid.points - grid.points_per_week
+    reference = world.latent(latent).severity_reference
+    repaired: list[float] = []
+    untouched: list[float] = []
+    for trajectory in realization.trajectories:
+        if trajectory.latent != latent:
+            continue
+        tail = trajectory.values[late:]
+        distance = (sum(tail) / len(tail) - trajectory.offset) / reference
+        was_repaired = any(
+            reset.kind == "UNSCHEDULED" and reset.fraction > 0.0
+            for reset in realization.resets_of(trajectory.chamber_id, latent))
+        (repaired if was_repaired else untouched).append(distance)
+    return repaired, untouched
+
+
+def _rms(values) -> float:
+    return math.sqrt(sum(v * v for v in values) / len(values))
+
+
+def test_a_repair_is_a_no_op_where_nothing_persistent_is_wrong(realization,
+                                                               world):
+    """The sharp form of ADR-020, on the null world: **exactly** nothing.
+
+    `edge_uniformity` is the clean case — a PM never touches it, so on a null
+    chamber the only thing between the latent and its benign offset is the
+    natural wander, and a wander is not something a technician can restore. A
+    repair therefore leaves the value bit-identical, which is a much stronger
+    statement than "close": under the old model *every* one of these resets
+    moved the latent, by a permanent `fraction × state`.
+    """
+    assert realization.mechanisms == ()          # nothing is wrong anywhere
+    assert world.latent("edge_uniformity").pm_recovery_mean == 0.0
+
+    resets = [r for r in realization.resets
+              if r.latent == "edge_uniformity" and r.kind == "UNSCHEDULED"]
+    working = [r for r in resets if r.fraction > 0.0]
+    assert len(working) > 15                     # the claim has support
+    assert len({r.chamber_id for r in working}) > 3
+    for reset in working:
+        assert reset.action == "restore"
+        assert reset.before == reset.after, reset
+
+
+def test_a_repair_leaves_no_trace_in_a_null_chamber_s_trajectory(timeline,
+                                                                 world):
+    """…and the trajectory is the one it would have had with no repair at all.
+
+    Same statement as above, taken to the whole series: remove every
+    unscheduled window from the calendar and the null `edge_uniformity`
+    trajectories come out identical. Only the *wander* latent can claim this —
+    a particle load is real material and a repair really does remove some of
+    it, which the next test pins.
+    """
+    from fabsim.timeline import order_maintenance, simulate
+
+    assert any(w.maint_type == "UNSCHEDULED" for w in timeline.maintenance)
+    without = simulate(
+        world, lots=BASELINE_LOTS, horizon_days=BASELINE_HORIZON_DAYS,
+        seed=timeline.seed,
+        maintenance=order_maintenance(w for w in timeline.maintenance
+                                      if w.maint_type != "UNSCHEDULED"))
+    stripped = realize(without)
+    reference = realize(timeline)
+
+    for chamber in world.chambers:
+        assert (stripped.trajectory(chamber.chamber_id, "edge_uniformity"
+                                    ).values
+                == reference.trajectory(chamber.chamber_id, "edge_uniformity"
+                                        ).values), chamber.chamber_name
+
+
+def test_a_repair_still_reaches_a_particle_load_in_a_null_chamber(realization):
+    """The symmetry ADR-017 bought must survive ADR-020.
+
+    An accumulating load has no self-correcting component to protect: every
+    particle in the chamber is real material, whoever put it there. So an
+    unscheduled repair moves `particle_load` on a healthy chamber exactly as
+    it always did, and "was this chamber ever repaired?" stays a question
+    about a chamber's history rather than about the answer key.
+    """
+    moved = [r for r in realization.resets
+             if r.latent == "particle_load" and r.kind == "UNSCHEDULED"
+             and r.fraction > 0.0]
+    assert len(moved) > 15
+    for reset in moved:
+        assert reset.action == "restore"
+        assert reset.after < reset.before
+        assert reset.after >= 0.0
+
+
+@pytest.mark.parametrize("latent", ["edge_uniformity", "param_bias"])
+def test_a_repaired_null_chamber_is_no_further_from_its_baseline(world,
+                                                                 latent):
+    """The population form: being repaired must buy no extra drift.
+
+    Repaired and unrepaired null chambers are compared in the design's own
+    natural scale, over several seeds, and the bound is the tolerance the
+    design already uses for that scale elsewhere (±30%,
+    `test_the_declared_severity_reference_matches_the_null_world`) rather than
+    a number chosen here. The unrepaired group is checked to sit on that scale
+    first, so the comparison cannot pass by both groups being inflated.
+
+    Measured before the correction, pooled over these seeds: `edge_uniformity`
+    repaired 1.67 against unrepaired 1.06 — a ratio of 1.58, which this bound
+    rejects. After it: 1.05 against 1.06.
+    """
+    repaired: list[float] = []
+    untouched: list[float] = []
+    for seed in (7, 42, 101):
+        realization = realized(world, default_seed=seed)
+        assert realization.mechanisms == ()
+        a, b = _late_distance(realization, world, latent)
+        repaired += a
+        untouched += b
+
+    assert len(repaired) > 30 and len(untouched) > 8
+    assert 0.7 < _rms(untouched) < 1.3, (latent, _rms(untouched))
+    assert _rms(repaired) / _rms(untouched) < 1.3, (
+        latent, _rms(repaired), _rms(untouched))
+
+
+def _with_repair(world, chamber, day: float):
+    """The reference timeline plus one hand-placed repair on one chamber.
+
+    A controlled realization: the fab's own calendar decides when a repair
+    happens from a chain of alarms and escalation, which is right for the
+    engine and useless for pinning arithmetic. Here the window is placed where
+    the question needs it — after the fault has settled — and everything else
+    about the world is untouched.
+    """
+    from fabsim.timeline import (
+        MaintenanceWindow,
+        order_maintenance,
+        simulate,
+    )
+
+    base = simulate(world, lots=BASELINE_LOTS,
+                    horizon_days=BASELINE_HORIZON_DAYS, seed=BASELINE_SEED)
+    start = int(day * MINUTES_PER_DAY)
+    repair = MaintenanceWindow(
+        maint_id=-1, tool_id=chamber.tool_id, chamber_id=chamber.chamber_id,
+        maint_type="UNSCHEDULED", start_min=start, end_min=start + 240,
+        technician=world.maintenance.technicians[0],
+        action_code=world.maintenance.unscheduled_action_codes[0])
+    return simulate(world, lots=BASELINE_LOTS,
+                    horizon_days=BASELINE_HORIZON_DAYS, seed=BASELINE_SEED,
+                    maintenance=order_maintenance(
+                        tuple(base.maintenance) + (repair,)))
+
+
+@pytest.mark.parametrize("event, latent", [
+    (EDGE_EVENT, "edge_uniformity"),
+    (DRIFT_EVENT, "param_bias"),
+])
+def test_a_repair_reduces_the_mechanism_departure_by_its_realized_fraction(
+        world, event, latent):
+    """A repair still recovers what a repair is for.
+
+    One hand-placed repair on a chamber carrying a large settled fault. The
+    **departure** — realized minus the mechanism-free twin, which is the
+    mechanism and nothing else — falls by exactly the realized fraction. That
+    is the half of the correction that must *not* have been lost: leaving the
+    natural state alone would be no use if it also stopped repairs working.
+    """
+    chamber = world.chamber_by_name(event["target"]["tool"],
+                                    event["target"]["chamber"])
+    onset = event["onset_day"] + event["profile"]["ramp_days"] + 7
+    timeline = _with_repair(world, chamber, onset)
+    config = from_mapping(scenario(events=[dict(event, severity="obvious")]))
+    faulted = realize_scenario(config, timeline)
+
+    grid = faulted.grid
+    trajectory = faulted.trajectory(chamber.chamber_id, latent)
+    departure = trajectory.departure()
+    index = grid.index_at(int(onset * MINUTES_PER_DAY) + 240)
+
+    (reset,) = [r for r in faulted.resets_of(chamber.chamber_id, latent)
+                if grid.index_at(r.minute) == index
+                and r.kind == "UNSCHEDULED"]
+    assert reset.action == "restore"
+    assert reset.fraction > 0.0
+
+    # There is something substantial to repair: at least a subtle fault's
+    # worth of departure is standing when the technician arrives. (An
+    # `obvious` activation does not arrive intact — PMs and earlier repairs
+    # have already taken their share, which is ADR-017's realized-versus-
+    # configured point and not a miss.)
+    before, after = departure[index - 1], departure[index]
+    floor = (world.observation.sigma_for("subtle")
+             * world.latent(latent).severity_reference)
+    assert abs(before) > floor
+    assert after == pytest.approx((1.0 - reset.fraction) * before, rel=1e-9)
+
+
+def test_a_repair_takes_the_persistent_departure_and_not_the_wander(world):
+    """…and Invariant 1: the other half, on the same event.
+
+    `edge_uniformity` on a chamber whose earlier maintenance provably left no
+    standing correction behind — a PM never touches this latent, and the two
+    unscheduled windows before onset were no-ops for exactly the reason the
+    null-world tests above pin. So at this repair the persistent departure
+    *is* the mechanism departure, and the two candidate models make different
+    arithmetic predictions for the same event:
+
+        ADR-020      shift = −fraction × departure          (the persistent part)
+        before it    shift = −fraction × (value − offset)   (…plus the wander)
+
+    The realized shift matches the first exactly and misses the second by the
+    fraction of the wander the old model would have booked permanently.
+    """
+    event = dict(EDGE_EVENT, severity="obvious")
+    chamber = world.chamber_by_name("ETCH-02", "B")
+    day = event["onset_day"] + event["profile"]["ramp_days"] + 7
+    timeline = _with_repair(world, chamber, day)
+    faulted = realize_scenario(from_mapping(scenario(events=[event])), timeline)
+
+    grid = faulted.grid
+    trajectory = faulted.trajectory(chamber.chamber_id, "edge_uniformity")
+    departure = trajectory.departure()
+    index = grid.index_at(int(day * MINUTES_PER_DAY) + 240)
+    resets = faulted.resets_of(chamber.chamber_id, "edge_uniformity")
+    (reset,) = [r for r in resets if grid.index_at(r.minute) == index]
+
+    # Nothing before this left a standing correction to complicate the sum.
+    assert all(r.before == r.after for r in resets
+               if grid.index_at(r.minute) < index)
+
+    wander = (reset.before - trajectory.offset) - departure[index - 1]
+    assert wander != 0.0
+    shift = reset.after - reset.before
+    assert shift == pytest.approx(-reset.fraction * departure[index - 1],
+                                  rel=1e-9)
+    assert shift != pytest.approx(
+        -reset.fraction * (reset.before - trajectory.offset), rel=1e-4)
+    assert (shift + reset.fraction * (reset.before - trajectory.offset)
+            == pytest.approx(reset.fraction * wander, rel=1e-9))
+
+
+def test_recovery_is_the_same_arithmetic_in_both_directions(world):
+    """Invariant 12: `edge_uniformity` is signed, and recovery must not care.
+
+    Downstream, defect propensity reads `|edge_uniformity|`; that absolute
+    value belongs to the intensity model. Recovery operates on the physical
+    decomposition, where a chamber running edge-slow is the mirror image of
+    one running edge-fast — so the mirror of a recovery has to be the recovery
+    of the mirror, exactly.
+    """
+    dynamics = world.latent("edge_uniformity")
+    step_days = LATENT_GRID_MINUTES / MINUTES_PER_DAY
+    noise = [stream(BASELINE_SEED, "test.signed", index).gauss(0.0, 1.0)
+             for index in range(60)]
+
+    def walk(sign: float, action: str) -> list[float]:
+        state = _LatentState(dynamics, offset=sign * 0.002, start=sign * 0.01,
+                             step_days=step_days)
+        out = []
+        for index, epsilon in enumerate(noise):
+            out.append(state.step(sign * epsilon, sign * 0.02))
+            if index == 30:
+                out.append(state.apply(action, 0.8))
+        return out
+
+    for action in ("recentre", "restore"):
+        positive = walk(+1.0, action)
+        negative = walk(-1.0, action)
+        assert positive == [pytest.approx(-v, rel=1e-12, abs=1e-18)
+                            for v in negative], action
+
+
+def test_a_pm_recentres_everything_and_a_repair_only_the_persistent_part(
+        world):
+    """The two actions, side by side on one state — the whole of ADR-020.
+
+    They differ by one term. A PM reads the delivered value and trims it, so
+    the wander is inside what it corrects (over-control, which is honest
+    behaviour of a calibration and is deliberately kept — §6 says a PM
+    *recentres* `param_bias`, and a recentre that skipped the wander would do
+    nothing at all to a healthy chamber). A repair restores hardware, so the
+    wander is outside it.
+    """
+    dynamics = world.latent("param_bias")
+    step_days = LATENT_GRID_MINUTES / MINUTES_PER_DAY
+
+    def prepared():
+        state = _LatentState(dynamics, offset=0.001, start=0.0,
+                             step_days=step_days)
+        state.step(2.0, 0.03)           # a wander of its own, plus a drive
+        return state
+
+    drive = 0.03
+    wander = prepared()._state
+    assert wander != 0.0
+
+    recentred = prepared()
+    recentred.recentre(0.5)
+    assert (recentred.value - recentred.offset
+            == pytest.approx(0.5 * (drive + wander)))
+
+    restored = prepared()
+    restored.restore(0.5)
+    assert (restored.value - restored.offset
+            == pytest.approx(0.5 * drive + wander))
+    assert restored._state == wander           # untouched, not merely close
+
+    # And the difference between them is exactly the term in dispute.
+    assert (recentred.value - restored.value
+            == pytest.approx(-0.5 * wander))
+
+
+def test_the_pre_adr_020_recovery_model_fails_this_suite(monkeypatch, world,
+                                                         timeline):
+    """A mutation check: restore the defect and the guard above must break.
+
+    Without this, "a repair is a no-op where nothing persistent is wrong"
+    could be passing for some reason other than the one it claims. The old
+    arithmetic — one credit against `drive + state + carry`, for every kind of
+    work alike — is put back, and the null world is asked the same question.
+    """
+    def old_recover(self, fraction: float) -> float:
+        if self._accumulating:
+            self._load *= (1.0 - fraction)
+            self.value = self.offset + self._load
+            return self.value
+        self._credit -= fraction * (self.value - self.offset)
+        return self._assemble()
+
+    monkeypatch.setattr(_LatentState, "recentre", old_recover)
+    monkeypatch.setattr(_LatentState, "restore", old_recover)
+    broken = realize(timeline)
+
+    moved = [r for r in broken.resets
+             if r.latent == "edge_uniformity" and r.kind == "UNSCHEDULED"
+             and r.fraction > 0.0 and r.before != r.after]
+    assert moved, "the mutation did not take"
+
+    repaired, untouched = _late_distance(broken, world, "edge_uniformity")
+    assert _rms(repaired) / _rms(untouched) > 1.3
 
 
 # ------------------------------------------------------- severity calibration

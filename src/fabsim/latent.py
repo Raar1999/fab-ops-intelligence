@@ -30,6 +30,15 @@ and the difference between them is the realized mechanism effect — measured,
 not asserted. Before an onset the two are bit-identical, which makes "the
 fault had not started yet" a checkable property rather than a promise.
 
+**Maintenance acts on dynamics, not on causes** (ADR-020). A wander latent is
+held as `offset + drive + credit + state`, and the two things maintenance can
+do are told apart by the *kind of work*: a PM cleans or calibrates, so it
+corrects a fraction of the whole departure; an unscheduled repair restores, so
+it corrects a fraction of the **persistent** departure (`drive + credit`) and
+leaves the mean-reverting `state` to revert on its own. Booking a permanent
+credit against a transient is over-control, and it used to leave a repaired
+chamber several σ from its own baseline in a world where nothing was wrong.
+
 **Benign offsets are baseline, not distractor bookkeeping** (requirement F11).
 Every tool and every chamber carries a permanent offset on every latent,
 drawn from the same Gaussian family whose spread reaches into the subtle
@@ -77,6 +86,8 @@ __all__ = [
     "LATENT_BLOCK_POINTS",
     "LATENT_GRID_MINUTES",
     "LATENT_MODEL",
+    "RECENTRE",
+    "RESTORE",
     "BenignOffset",
     "DistractorRealization",
     "LatentGrid",
@@ -114,6 +125,22 @@ LATENT_MODEL = "fabsim.latent/v1"
 #: Guard on the per-activation magnitude jitter. Severity is a target rather
 #: than a guarantee, but a draw may not flip or annihilate an activation.
 _MIN_JITTER = 0.1
+
+#: The two things maintenance can physically do to a latent (ADR-020). The
+#: distinction is about the **kind of work**, never about its cause:
+#:
+#: * `RECENTRE` — a clean or a calibration. It acts on the chamber's whole
+#:   departure from nominal, because that is what it measures and corrects: a
+#:   wet clean removes every particle it finds, and a recalibration nulls the
+#:   delivered-versus-set deviation it reads, whatever produced it.
+#: * `RESTORE` — a repair. It acts on the **persistent** departure only. A
+#:   technician replacing a worn part removes a degradation that was not going
+#:   to correct itself; they do not, and cannot, re-zero a mean-reverting
+#:   fluctuation that will revert on its own. Booking a permanent credit
+#:   against a transient is what left repaired chambers several σ from their
+#:   own baseline before this decomposition existed.
+RECENTRE = "recentre"
+RESTORE = "restore"
 
 
 # -------------------------------------------------------------------- the grid
@@ -206,10 +233,15 @@ class LatentReset:
     #: Filled from the final calendar; `-1` until a response-created repair is
     #: rebound to the id its window gets there.
     maint_id: int
-    #: Fraction of the current departure removed on this latent.
+    #: Fraction removed on this latent — of *what* is `action`'s business.
     fraction: float
     #: `PM` or `UNSCHEDULED`, matching the window that caused it.
     kind: str = "PM"
+    #: What the work physically did to this latent (ADR-020): `recentre` — a
+    #: clean or a calibration, which acts on the whole departure from the
+    #: chamber's nominal; `restore` — a repair, which acts on the persistent
+    #: departure and leaves the self-correcting natural state alone.
+    action: str = RECENTRE
     #: The intervention's drawn quality, shared by every latent this event
     #: touched; `None` for a PM, whose per-latent policy is stated directly.
     quality: float | None = None
@@ -405,12 +437,35 @@ def _blocked_noise(rngs: Substreams, latent: str, tool_name: str,
 class _LatentState:
     """One chamber's one latent, stepped forward one grid point at a time.
 
-    The arithmetic is exactly the one-shot integration of Step 3A; only the
-    loop order changed, so that the response layer can look at where a latent
-    *is* before deciding what the fab does about it. Two states run side by
-    side per latent — the configured one and its mechanism-free twin — sharing
-    every draw and every recovery, so the difference between them is the
-    mechanism and nothing else.
+    Two states run side by side per latent — the configured one and its
+    mechanism-free twin — sharing every draw and every maintenance action, so
+    the difference between them is the mechanism and nothing else.
+
+    A wander latent is held as **named parts**, not as one number, and that
+    decomposition is the whole reason maintenance can be modelled honestly
+    (ADR-020)::
+
+        value = offset + drive + credit + state
+                  │       │       │        └ the natural AR(1) wander:
+                  │       │       │          transient, self-correcting,
+                  │       │       │          nobody's fault and nobody's fix
+                  │       │       └ standing correction maintenance has booked
+                  │       └ what a mechanism imposes
+                  └ permanent benign offset; never reset by anything
+
+        persistent departure := drive + credit
+
+    The parts differ in their **dynamics**, and that is what maintenance acts
+    on. `state` reverts to zero on its own with a time constant of a couple of
+    days; `drive` and `credit` do not revert at all. Booking a permanent
+    credit against `state` — which is what a plain `value - offset` departure
+    does — corrects something that was going to correct itself and leaves the
+    chamber permanently biased the other way. That is the defect ADR-020
+    fixes, and it is why the two maintenance actions differ by exactly one
+    term in one bracket.
+
+    Nothing here knows *why* a drive is nonzero, and nothing here is told
+    which kind of window is calling: `apply` takes an action and a fraction.
     """
 
     def __init__(self, dynamics: LatentDynamics, offset: float, start: float,
@@ -429,9 +484,19 @@ class _LatentState:
         else:
             self._phi = float(dynamics.phi)
             self._sigma = float(dynamics.sigma)
+            #: The natural mean-reverting wander. No maintenance ever writes
+            #: to it; only `step` does.
             self._state = start
-            self._carry = 0.0
+            #: Standing correction maintenance has booked on this latent —
+            #: a PM's trim and a repair's restoration in one running total,
+            #: because both are persistent and neither decays.
+            self._credit = 0.0
             self._drive = 0.0
+
+    # -- the assembled observable level ------------------------------------
+    def _assemble(self) -> float:
+        self.value = (self.offset + self._drive + self._credit + self._state)
+        return self.value
 
     def step(self, epsilon: float, drive: float) -> float:
         """Advance one grid point and return the new value."""
@@ -442,34 +507,76 @@ class _LatentState:
                            * self.step_days + self._step_sigma * epsilon)
             self._load = max(self._load, self._floor)
             self.value = self.offset + self._load
-        else:
-            # The drive is the level the process reverts *to*, not an impulse
-            # inside the recursion: a sustained push inside a φ=0.98 recursion
-            # would amplify fiftyfold, which is a modelling accident rather
-            # than physics.
-            self._state = self._phi * self._state + self._sigma * epsilon
-            self._drive = drive
-            self.value = self.offset + drive + self._state + self._carry
-        return self.value
+            return self.value
+        # The drive is the level the process reverts *to*, not an impulse
+        # inside the recursion: a sustained push inside a φ=0.98 recursion
+        # would amplify fiftyfold, which is a modelling accident rather
+        # than physics.
+        self._state = self._phi * self._state + self._sigma * epsilon
+        self._drive = drive
+        return self._assemble()
 
-    def recover(self, fraction: float) -> float:
-        """Remove `fraction` of the current departure; return the new value.
+    def recentre(self, fraction: float) -> float:
+        """A clean or a calibration: act on the whole departure from nominal.
 
-        A recovery does not touch the noise process. For a wander latent it
-        books a permanent credit against the departure, so the process carries
-        on from where the intervention left it — which is what makes a
-        partially recovered chamber different from an untouched one, and what
-        leaves a residual for "did the intervention work?" to be about.
+        This is what a PM does, and it acts on everything it can reach because
+        that is what the *work* is: a wet clean takes out every particle in
+        the chamber, and a recalibration reads the delivered-versus-set
+        deviation and trims it out, without asking how much of it was a fault,
+        how much was drift and how much was ordinary wander.
+
+        Trimming against ordinary wander is over-control, and over-control
+        adds variance — Deming's funnel, in a fab. That is honest behaviour of
+        a calibration, it happens to every chamber on the same PM cadence, and
+        it is deliberately kept: `CAUSAL_MECHANISM_MODEL.md` §6 says a PM
+        *recentres* `param_bias`, and a recentre that skipped the wander would
+        do nothing at all on a healthy chamber.
         """
         if self._accumulating:
             self._load *= (1.0 - fraction)
             self.value = self.offset + self._load
-        else:
-            departure = self.value - self.offset
-            self._carry -= fraction * departure
-            self.value = (self.offset + self._drive + self._state
-                          + self._carry)
-        return self.value
+            return self.value
+        self._credit -= fraction * (self._drive + self._credit + self._state)
+        return self._assemble()
+
+    def restore(self, fraction: float) -> float:
+        """A repair: act on the **persistent** departure, and only on it.
+
+        A technician replacing a worn part removes a degradation that was not
+        going to go away by itself — including a standing trim an earlier PM
+        left behind, which is as much a departure from nominal as the fault it
+        was compensating. What they do not do is re-zero the chamber's
+        ordinary fluctuation: there is nothing there to re-zero, and a credit
+        booked against a transient becomes a permanent bias the moment the
+        transient reverts.
+
+        The one bracket below is the whole correction. Compared with
+        `recentre` it is missing exactly one term — `self._state` — and that
+        missing term is what used to send repaired chambers several σ from
+        their own baseline in a world where nothing was wrong.
+
+        For an accumulating load there is no such distinction to make: every
+        particle in the chamber is real material, whoever put it there, and
+        removing a share of it is removing a share of it.
+        """
+        if self._accumulating:
+            self._load *= (1.0 - fraction)
+            self.value = self.offset + self._load
+            return self.value
+        self._credit -= fraction * (self._drive + self._credit)
+        return self._assemble()
+
+    def apply(self, action: str, fraction: float) -> float:
+        """Dispatch one maintenance action. The only entry point the walk has.
+
+        It takes the *kind of work* and a fraction — never a mechanism, never
+        a scenario, never a cause.
+        """
+        if action == RECENTRE:
+            return self.recentre(fraction)
+        if action == RESTORE:
+            return self.restore(fraction)
+        raise ValueError(f"unknown maintenance action {action!r}")
 
 
 # ------------------------------------------------------------------ the engine
@@ -578,17 +685,20 @@ def _recovery_fractions(world: World, rngs: Substreams, tool_name: str,
                         chamber_name: str, latents: Sequence[str],
                         maint_type: str, end_minute: int,
                         pm_rngs: Mapping[str, Any]
-                        ) -> list[tuple[str, float, float | None, bool]]:
+                        ) -> list[tuple[str, str, float, float | None, bool]]:
     """What one maintenance event does to each of a chamber's latents.
 
-    Two policies, chosen by the *kind of work*, never by its cause:
+    Returns `(latent, action, fraction, quality, no_fix)` per latent. Two
+    policies, chosen by the *kind of work*, never by its cause:
 
-    * a **PM** applies each latent's declared `pm_recovery` — a full clean of
-      the particle load, a partial recentre of the delivery bias, nothing at
-      all to the hardware, exactly as `CAUSAL_MECHANISM_MODEL.md` §6 states;
-    * **unscheduled** work — a background breakdown and a condition-driven
-      repair are the same thing here — draws one intervention quality and
-      spreads it across the latents by their `repair_efficacy`.
+    * a **PM** is service work — cleaning and calibration. It applies each
+      latent's declared `pm_recovery` as a `RECENTRE`: a full clean of the
+      particle load, a partial recentre of the delivery bias, nothing at all
+      to the hardware, exactly as `CAUSAL_MECHANISM_MODEL.md` §6 states;
+    * **unscheduled** work is a repair — a background breakdown and a
+      condition-driven repair are the same thing here. It draws one
+      intervention quality, spreads it across the latents by their
+      `repair_efficacy`, and applies it as a `RESTORE`.
 
     Nothing in this function can tell a breakdown from a requested repair, and
     nothing in it can see a mechanism. That is what makes "did something get
@@ -603,14 +713,14 @@ def _recovery_fractions(world: World, rngs: Substreams, tool_name: str,
                 continue
             fraction = min(1.0, max(0.0, pm_rngs[latent].gauss(
                 dynamics.pm_recovery_mean, dynamics.pm_recovery_sd)))
-            result.append((latent, fraction, None, False))
+            result.append((latent, RECENTRE, fraction, None, False))
         return result
 
     rng = rngs.stream("response.recovery", tool_name, chamber_name,
                       int(end_minute))
     quality, no_fix = draw_recovery_quality(rng, world.response.recovery)
-    return [(latent, quality * world.latent(latent).repair_efficacy, quality,
-             no_fix)
+    return [(latent, RESTORE,
+             quality * world.latent(latent).repair_efficacy, quality, no_fix)
             for latent in latents]
 
 
@@ -748,17 +858,22 @@ def realize(timeline: Timeline, *,
                 fractions = _recovery_fractions(
                     world, rngs, tool.tool_name, chamber.chamber_name,
                     latents, maint_type, end_minute, pm_rngs)
-                for latent, fraction, quality, no_fix in fractions:
+                for latent, action, fraction, quality, no_fix in fractions:
                     before = states[latent].value
-                    after = states[latent].recover(fraction)
-                    nulls[latent].recover(fraction)
+                    after = states[latent].apply(action, fraction)
+                    # The twin sees the same work with the same realized
+                    # fraction. Where the twin moves and the configured state
+                    # does not — or the other way round — that difference is
+                    # the mechanism, measured rather than asserted.
+                    nulls[latent].apply(action, fraction)
                     recorded[latent][-1] = after
                     recorded_null[latent][-1] = nulls[latent].value
                     resets.append(LatentReset(
                         chamber_id=chamber.chamber_id, latent=latent,
                         minute=end_minute, maint_id=maint_id,
-                        fraction=fraction, kind=maint_type, quality=quality,
-                        no_fix=no_fix, before=before, after=after))
+                        fraction=fraction, kind=maint_type, action=action,
+                        quality=quality, no_fix=no_fix, before=before,
+                        after=after))
 
         for latent in latents:
             trajectories.append(LatentTrajectory(

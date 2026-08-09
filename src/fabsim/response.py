@@ -621,8 +621,9 @@ def _rebind(realization: Realization,
     resets = tuple(
         LatentReset(chamber_id=r.chamber_id, latent=r.latent, minute=r.minute,
                     maint_id=by_key.get((r.chamber_id, r.minute), -1),
-                    fraction=r.fraction, kind=r.kind, quality=r.quality,
-                    no_fix=r.no_fix, before=r.before, after=r.after)
+                    fraction=r.fraction, kind=r.kind, action=r.action,
+                    quality=r.quality, no_fix=r.no_fix, before=r.before,
+                    after=r.after)
         for r in realization.resets
     )
     return Realization(

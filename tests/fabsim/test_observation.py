@@ -456,27 +456,50 @@ def test_a_mechanism_reaches_nothing_before_its_onset(world, drift):
 def test_the_observable_effect_scales_with_the_realized_latent(world):
     """Severity flows through the *realized* state, never the configured one.
 
-    The ratio of observable contribution to realized latent shift is the same
-    at every severity, because the transfer function is the only thing between
-    them (ADR-018).
+    Measured **per run**: the observable contribution divided by the latent
+    departure over that run's own window, in severity-σ, is the channel's
+    declared `sensitivity × scale` — the same number at every severity, on
+    every run, because the transfer function is the only thing between the two
+    planes (ADR-018).
+
+    Deliberately not a ratio of the *mean* contribution to the *peak* weekly
+    shift. That statistic mixes the transfer function with the shape of the
+    trajectory in time, and the shape legitimately depends on severity once
+    the fab responds: a bigger departure is repaired sooner and harder, so its
+    average sits further below its peak. Per run there is nothing left but the
+    transfer function, which is what the claim is about.
     """
-    ratios = []
+    channel = world.channel("gas_flow_sccm")
+    expected = dict(channel.sensitivities)["param_bias"] * channel.scale
+    chamber = target_chamber(world, DRIFT_EVENT)
+
     for severity in ("subtle", "moderate", "obvious"):
         response, observations = measured(
             world, events=[dict(DRIFT_EVENT, severity=severity)])
-        chamber = target_chamber(world, DRIFT_EVENT)
         deltas = contribution(response, observations)
         runs = runs_by_id(response)
-        moved = [deltas[m.run_meas_id] for m in observations.run_measurements
-                 if m.param_name == "gas_flow_sccm"
-                 and runs[m.run_id].chamber_id == chamber
-                 and deltas[m.run_meas_id] != 0.0]
-        assert moved
-        realized = response.realization.mechanisms[0].realized_shift_sigma
-        ratios.append(st.mean(moved) / realized)
+        grid = response.realization.grid
+        reference = world.latent("param_bias").severity_reference
+        departure = response.realization.trajectory(chamber,
+                                                    "param_bias").departure()
+        ratios = []
+        for measurement in observations.run_measurements:
+            if measurement.param_name != "gas_flow_sccm":
+                continue
+            run = runs[measurement.run_id]
+            if run.chamber_id != chamber:
+                continue
+            window = departure[grid.index_at(run.start_min):
+                               grid.index_at(run.end_min) + 1]
+            shift = sum(window) / len(window) / reference
+            if shift == 0.0:
+                assert deltas[measurement.run_meas_id] == 0.0
+                continue
+            ratios.append(deltas[measurement.run_meas_id] / shift)
 
-    assert st.pstdev(ratios) / st.mean(ratios) < 0.05
-    assert all(ratio > 0.0 for ratio in ratios)
+        assert len(ratios) > 20, severity
+        assert all(ratio == pytest.approx(expected, rel=1e-9)
+                   for ratio in ratios), severity
 
 
 def test_several_channels_respond_and_none_of_them_alone_is_the_answer(
