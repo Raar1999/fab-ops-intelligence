@@ -44,7 +44,12 @@ from fabeval.acceptance import (
     check_a11,
 )
 from fabeval.fixtures import expectation_for
-from fabeval.leakage import Finding, l8_seed_sensitivity, run_leakage_suite
+from fabeval.leakage import (
+    Finding,
+    l7_null_calibration,
+    l8_seed_sensitivity,
+    run_leakage_suite,
+)
 from fabeval.truthschema import TruthValidationError, validate_truth
 
 __all__ = [
@@ -249,6 +254,11 @@ def evaluate(built: Mapping[tuple[str, int], Sequence[Any]],
     null = next((d for d in library if not d.truth["events"]), None)
     a2_seeds = [built[(DEMO_SCENARIO, seed)][0] for seed in A2_SEEDS
                 if (DEMO_SCENARIO, seed) in built]
+    # Every fault-free realization the matrix built. A6's floor and L7's
+    # calibration are both population readings, and both refuse a population
+    # too small to mean anything rather than reporting from it.
+    nulls = [copies[0] for (scenario, _seed), copies in built.items()
+             if scenario == "null_baseline"]
 
     duplicates = {f"{scenario}@{seed}": copies
                   for (scenario, seed), copies in built.items()
@@ -269,10 +279,9 @@ def evaluate(built: Mapping[tuple[str, int], Sequence[Any]],
             "A3", BLOCKED, "no null scenario in the matrix"),
         check_a4(library),
         check_a5(faulted),
-        check_a6(library, sweep=sweep,
-                 nulls=[copies[0] for (scenario, _seed), copies
-                        in built.items() if scenario == "null_baseline"]),
-        check_a7(findings, l8_seed_sensitivity(a2_seeds)),
+        check_a6(library, sweep=sweep, nulls=nulls),
+        check_a7(findings, l8_seed_sensitivity(a2_seeds),
+                 l7_null_calibration(nulls)),
         check_a8(library),
         check_a9(primary[DEMO_SCENARIO]) if DEMO_SCENARIO in primary
         else Verdict("A9", BLOCKED, "the demo scenario was not built"),

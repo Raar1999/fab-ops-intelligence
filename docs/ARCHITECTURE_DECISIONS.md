@@ -446,3 +446,80 @@ Correcting A6 and L7 means choosing what they should compare instead, and that i
 A9's three options are unchanged from ADR-025 §3, with one addition this gate's §7 supports: any restatement of the band should be derived from the parametric channel's measured budget rather than from the legacy cohort gap.
 
 **Diagnosis remains blocked.** `DIAGNOSIS_CONTRACT.md` §5's measured warning was read off the defective comparison and is corrected there: an engine ranking chambers on one statistic does **not** score at chance on the null — moderate reaches p = 0.018 on alarms and p = 0.060 on edge CD. The contract's *conclusion* is unaffected and better supported: the evidence is multi-channel and temporal, no single channel is decisive, and §8's five open decisions still have to be made before an engine is written.
+
+## ADR-027 — The null reference distribution: one derived object, three criteria read against it; A9's legacy band retired as binding
+
+**Status: Accepted (2026-08-09), from the A6/A7/A9 architecture decision gate.** ADR-026 measured that A6's floor and L7's threshold could not work and recorded three options rather than choosing one, because choosing was an architecture decision. This gate makes the choice. **No `src/fabsim/` change, no world constant, no simulator tuning** — ADR-026 §4 proved no such lever exists, and this gate re-confirmed it before touching anything.
+
+**1. The decision, in one sentence.** The three criteria that ask "is this chamber's standing larger than benign variation produces?" now read against **the distribution of that statistic under the null hypothesis they are about**, derived from exchangeability and from the chamber count, in `src/fabeval/reference.py`. What each criterion asks of it differs, because the questions differ — and that difference is the whole of the design.
+
+```
+per_chamber   one *specified* chamber.  A6 asks this: truth names the planted
+              chamber, so the comparison is one chamber against single
+              benign chambers.
+per_world     the *worst* chamber.  L7's guard asks this: an analyst facing a
+              fault-free world does not know which chamber to excuse.
+```
+
+The reference is **external to every dataset** — it comes from the chamber count and from F10/F11's exchangeability and from nothing any dataset contains. That is what keeps it from being the tautology ADR-026 §4 warned of: a threshold fitted to the nulls it judges cannot fail. Whether the simulator's nulls actually match it is then a real question, and `l7_null_calibration` is the check that asks it.
+
+**2. L7 — the options, and why the chosen one.** The gate weighed four.
+
+| | what it measures | preserves T5 | seed-count invariant | needs simulator change | leakage risk |
+|---|---|---|---|---|---|
+| **A** empirical null quantile | fault evidence against a quantile of the nulls | no — it scores the *fault*, which is L11's job, and a quantile fitted to the same nulls it judges is circular | yes | no | none, but vacuous |
+| **B** within-world matched control | affected against contemporaneous healthy chambers | partly — a null has no affected chamber, so the form does not apply | yes | no | none |
+| **C** effect-vs-null distribution | null worlds against subtly-faulted worlds | yes | yes | no | none |
+| **D (chosen)** derived reference, two clauses | a per-world action limit **and** a population exceedance rate | yes, in both failure directions | yes | no | none |
+
+**A** was rejected as circular and as answering L11's question rather than L7's. **B** does not have a form on a fault-free world, which is the only world L7 runs on. **C** is genuinely defensible and was the closest runner-up — "a fault-free world must not look more fault-like than one at the detection floor" is exactly L7's own wording read as a comparison — but it costs a second population of subtle-severity builds for every verdict, and a single grossly poisoned null among *N* barely moves a two-sample statistic, so it would have been weaker against the mutation L7 exists to catch. **D** keeps C's insight (the reference is a distribution, not a constant) while splitting the question in two, because the two failure modes need different instruments:
+
+  * **the per-world action limit** (`l7_null_blindness`, unchanged in shape) catches one chamber grossly out. Its level is the fab's **own** control-limit convention — 3 sigma, the multiple eight of the nine `alarms.codes` in `baseline_fab_v1` declare, i.e. a per-chamber false-alarm rate of 0.0027 — carried into the leave-one-out currency, which is **6.46** at seven chambers. The anchor is not decoration: this runs on every null dataset of every build, so it needs an *action* limit rather than a screening one, which is the same reason a real fab charts at 3 sigma and not at 2. The evaluator borrows the convention the simulated fab already declares rather than inventing one.
+  * **the population calibration** (`l7_null_calibration`, cross-dataset like L8) catches structure spread thinly across many chambers, where no single world looks alarming and every world is a little out — which is what a *generator* defect would actually produce, and what no per-world threshold can see. Screening level `ALPHA = 0.05`, because this is where power matters and there is one verdict rather than one per dataset.
+
+**3. What that measures on the world as built.** At the derived limits, over the twelve fault-free worlds ADR-026 built:
+
+```
+per-world action limit (alpha 0.0027 -> c 6.46 at n=7)
+    worlds tripping any channel        0 / 12      (worst chamber seen: 5.38)
+population calibration (alpha 0.05 -> c 3.04 at n=7)
+    edge_cd            3 / 84          edge_defect_share  4 / 84
+    yield_split        2 / 84          pooled             9 / 252 = 0.036
+                                       against 0.050 expected
+at the fab's stricter 3-sigma level    0 / 252     against 0.7 expected
+```
+
+The null is correctly sized, and it is correctly sized at *both* declared levels — so the conclusion does not depend on which one is chosen, which is the property a level picked to produce an outcome would not have.
+
+**4. What the correction gave up, measured rather than glossed.** Poisoning one chamber's `cd_nm_edge` in a null database: a 30% shift reaches 19.2 sigma and fails, 10% reaches 10.8 and fails, **5% reaches 4.7 and passes**. The old 2.5 constant caught a 2% shift. That is not sensitivity this gate traded away — at 2% the old check named the *wrong* chamber, and it flagged nine healthy worlds in ten. A check that fires on the benign structure rule F11 *requires* the null to contain is not detecting anything; ADR-026 §2 measured it failing 10 of 12 correct nulls. The population calibration covers the failure mode the per-world guard cannot see, and its resolving power is reported in its own detail line rather than assumed.
+
+**5. A6 — the same reference, the per-chamber side.** A6's sweep half is now read as an **exceedance probability**: how often a benign chamber reaches at least the planted chamber's standing. That currency converges, and unlike sigma it means the same thing on a channel read at 7 chambers and one read at 18. Measured against the declared `ALPHA = 0.05`:
+
+```
+                  edge_cd   edge_defect_share   yield_split   | alarms
+subtle  (1.61 s)   0.173          0.137            0.372      |  0.061
+moderate(3.22 s)   0.076          0.105            0.339      |  0.0009 *
+obvious (4.00 s)   0.051          0.119            0.336      |  0.0018 *
+```
+
+Two decisions inside that table. **A6's evidence channels are the three its own text names** — "chamber-grain yield split + edge-zone defect elevation + edge-CD shift". `alarms` is carried because the criterion's temporal alignment is read off it, but A6 does not list it as evidence, so it corroborates and cannot satisfy the criterion alone; letting the strongest channel carry a criterion that never asked for it is how a benchmark quietly becomes easier. And **the difficulty axis is now checkable from both ends**: subtle must stay *inside* benign variation (it does, on all four channels) and moderate must clear it (it does not, on any of the three declared ones). A subtle rung that separated would block A6, which the old formulation could not express.
+
+**A6 therefore stays PARTIAL, with a reason that converges.** The verdict did not move; what moved is that it is now a statement about the simulator instead of about the evaluator's budget. `natural_variation_floor` is kept and still reported as evidence — it is a real quantity — but it is no longer a threshold.
+
+**6. A9 — the legacy band is retired as binding and preserved as a reference; the yield *item* is not this gate's to retire.** Provenance, traced end to end: the band appears as "4–10 pts" in `PHASE_1_ACCEPTANCE.md` A9 and as "≈ 4–8 pts" in `CAUSAL_MECHANISM_MODEL.md` §8 and `SCENARIO_SPECIFICATION.md` §4 B; all three trace to `docs/audit/SYNTHETIC_DATA_AUDIT.md` #5, whose decomposition of the audited v1's ~12-point ETCH-02 deficit is 8.0 points of direct `−0.08 if bad_tool` label effect and **~3.7 points mediated**. So:
+
+  1. **What question was it meant to answer?** ADR-010 demo continuity — does the successor still tell a recognisable ETCH-02 story?
+  2. **Legacy observation or architectural requirement?** A legacy *numerical observation*, promoted to a numerical target. A9's own prose says the criterion is "statistical equivalence and demo continuity, not reproduction of the legacy numerical outputs", and ADR-010 says the same.
+  3. **Does the architecture forbid reproducing it?** Yes. ADR-004 abolishes the term two thirds of it consisted of.
+  4. **Can the current mechanism reach it?** No, by a factor of at least 4.4 (ADR-026 §7), and the band's own floor sits *above* the 3.7 points the legacy system produced through physics.
+  5. **Correct action:** **retire the numeric band as binding, preserve it as a historical reference marked non-binding.** `check_a9` reports it in the evidence at every verdict and no longer gates on it; `acceptance.LEGACY_COHORT_BAND` keeps the number so retiring it cannot become deleting it, and a test pins both halves.
+
+  **A9 nevertheless stays BLOCKED, on the item that is actually unmet.** With the band no longer in the way, the checklist's first item fails on its own terms: the affected tool is **not** the worst etch tool on cohort yield (ETCH-03 at −0.163 pts is, against ETCH-02's −0.082). That is a *ranking* failure, not a magnitude one, and its cause is measured: the between-tool benign spread on cohort yield is **0.410 pts** against a mechanism-attributable effect of **0.058 pts** (ADR-025 §1), so which tool ranks worst on yield is decided by benign variation at every severity.
+
+  Whether demo continuity should keep a yield item at all is therefore the open question, and **this gate does not answer it**, because both available answers have consequences no evaluator change can contain: dropping the item changes what the project's flagship demo claims, and making the item reachable means recalibrating the composition ADR-026 §1 identified (ADR-018 §4's un-amplified transfer against ADR-021 §5's 3.0-tolerance functional limit), which moves every dataset and needs its own gate. The band is retired because its provenance settles it; the item is not, because its provenance does not.
+
+**7. A defect this gate found in its own new code, recorded rather than quietly fixed.** The first `_leave_one_out_z` computed the held-out mean and variance by subtracting from running totals — algebraically identical to the definition and *numerically wrong*: `Σx²/(n−1) − mean²` is a difference of two nearly equal large numbers whenever the spread is small against the mean, and it was measured disagreeing with `fabeval.queries.zscore` by up to **43 sigma** on heterogeneous inputs. It never reached a verdict, because the check that caught it was written before the reference was used for anything. A reference distribution of subtly the wrong shape would have mis-sized every criterion in this ADR while looking entirely healthy, so the agreement with the definition is now a test.
+
+**8. What changed, and what did not.** Changed: `src/fabeval/reference.py` (new), `sweep.summarize`, `leakage.l7_null_blindness` + `l7_null_calibration`, `acceptance.check_a6`/`check_a7`/`check_a9`, `matrix.evaluate`, their tests, and the design documents these findings touch. **Unchanged: `src/fabsim/`, `src/fabops/`, `app/`, `data/`, `sql/`, `scenarios/`, every world constant, and the legacy v1 surfaces.** One verdict moved, on measurement: **A7 BLOCKED → PARTIAL**, because its check stopped measuring an order statistic. **A6 stays PARTIAL** and **A9 stays BLOCKED** — A9 on a different and truer item, which is a strengthening rather than a relaxation: it used to block on something provably unreachable, and now blocks on something a better-composed model could actually satisfy. **Nothing became PASS.**
+
+**9. Diagnosis is still not authorized**, and the blocker is now precise. ADR-026 corrected `DIAGNOSIS_CONTRACT.md` §5's measurement; this gate gives §8's open decision 2 — the abstention threshold, which "must be calibrated against the null worlds, never against the faulted ones" — the instrument it lacked, since `reference.py` is exactly that calibration and is engine-independent. Four of the five open decisions remain (the score's definition, the onset statistic, the artifact's schema name, and where the package lives), and A9's yield-item question is open. Diagnosis waits on those, not on the benchmark.

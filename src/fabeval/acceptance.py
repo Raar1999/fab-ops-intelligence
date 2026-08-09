@@ -349,7 +349,8 @@ def check_a5(datasets: Sequence[Any], horizon_days: int = 84) -> Verdict:
 def check_a6(datasets: Sequence[Any],
              sweep: Mapping[str, Any] | None = None,
              nulls: Sequence[Any] = (),
-             label: str = "ETCH-02/B") -> Verdict:
+             label: str = "ETCH-02/B",
+             alpha: float | None = None) -> Verdict:
     """Causal plausibility: does each declared mechanism reach its channel?
 
     Truth says which channels the mechanism *should* reach — `causal_chain`
@@ -388,6 +389,7 @@ def check_a6(datasets: Sequence[Any],
                        "supplied to this call", tuple(evidence))
 
     from fabeval.sweep import (
+        A6_EVIDENCE_CHANNELS,
         MINIMUM_FLOOR_SEEDS,
         natural_variation_floor,
         severity_sweep,
@@ -402,50 +404,85 @@ def check_a6(datasets: Sequence[Any],
                        "'above the floor' means anything", tuple(evidence))
     readings = severity_sweep(sweep, label)
     floor = natural_variation_floor(nulls)
-    outcome = summarize(readings, floor)
+    outcome = summarize(readings, floor, alpha=alpha)
     for reading in readings:
+        row = outcome["exceedance"][reading.severity]
         evidence.append(
             f"sweep {reading.severity:8s} realized "
             f"{reading.realized_sigma:5.2f} sigma  " + "  ".join(
-                f"{c}={s:+.2f}(rank {r}/{n})"
+                f"{c}={s:+.2f}(rank {r}/{n}, p={row[c]:.4f})"
                 for c, (s, r, n) in sorted(reading.standing.items())))
-    evidence.append(f"natural-variation floor (worst chamber on a null): "
-                    f"{outcome['floor']}")
+    evidence.append(
+        f"p is the exceedance probability against the exchangeable "
+        f"per-chamber reference; the declared level is "
+        f"alpha={outcome['alpha']} (ADR-027)")
+    evidence.append(
+        f"A6's declared evidence channels are {list(A6_EVIDENCE_CHANNELS)}; "
+        f"alarms corroborates and cannot satisfy the criterion alone")
+    evidence.append(f"natural-variation floor, reported not thresholded "
+                    f"(worst chamber on a null): {outcome['floor']}")
 
     if not outcome["realized_rises_with_severity"]:
         return Verdict("A6", BLOCKED,
                        f"realized severity does not rise with the configured "
                        f"ladder: {outcome['realized']}", tuple(evidence))
 
+    if not outcome["subtle_within_benign_range"]:
+        # The difficulty axis fails from the *other* end: a subtle fault that
+        # separated would mean the hard case had stopped being hard.
+        return Verdict(
+            "A6", BLOCKED,
+            "at subtle severity the planted chamber already separates from "
+            f"benign variation ({outcome['exceedance']['subtle']}), so the "
+            "criterion's 'sit near the natural-variation floor' half fails "
+            "and the ladder has no hard rung", tuple(evidence))
+
     if not outcome["separated_at_moderate"]:
-        # Measured, not assumed. A6 asks that the evidence be *recovered* at
-        # moderate; ranking first is not recovery, because on a null world
-        # some chamber always ranks first and does so at a comparable sigma.
+        # Measured against a reference that converges (ADR-027). Ranking first
+        # is still not recovery; what has changed is that "beyond benign
+        # variation" is now one specified chamber against single benign
+        # chambers, rather than against a maximum over every chamber of every
+        # null world ever built.
         return Verdict(
             "A6", PARTIAL,
             "the difficulty axis exists - realized severity rises "
-            f"{outcome['realized']} and channel(s) "
-            f"{outcome['monotone_channels'] or 'none'} rise with it - but at "
-            "moderate severity the planted chamber does not exceed the "
-            "natural-variation floor on any single reference channel, so the "
-            "criterion's 'recovers the intended evidence' half is not met by "
-            "a single query. Whether it is recoverable by combining channels "
-            "and controlling for each chamber's own baseline is the diagnosis "
-            "engine's question, not a reference query's", tuple(evidence))
+            f"{outcome['realized']}, channel(s) "
+            f"{outcome['monotone_channels'] or 'none'} rise with it, and "
+            "subtle stays inside benign variation - but at moderate severity "
+            "the planted chamber does not clear the "
+            f"alpha={outcome['alpha']} level on any channel A6 names as "
+            "evidence: "
+            + str({c: p for c, p in outcome['exceedance']['moderate'].items()
+                   if c in A6_EVIDENCE_CHANNELS}) + ". "
+            + (f"It does clear on {outcome['corroborating_at_moderate']}, "
+               "which corroborates but is not the criterion's own evidence "
+               "list. " if outcome["corroborating_at_moderate"] else "")
+            + "Whether the intended evidence is recoverable by combining "
+            "channels and controlling for each chamber's own baseline is the "
+            "diagnosis engine's question, not a reference query's",
+            tuple(evidence))
 
     return Verdict("A6", PASS,
                    f"evidence recovered at moderate on "
-                   f"{outcome['separated_at_moderate']}, above the null "
-                   f"floor; subtle sits at or below it: "
-                   f"{outcome['subtle_at_or_below_floor']}", tuple(evidence))
+                   f"{outcome['separated_at_moderate']} beyond the "
+                   f"alpha={outcome['alpha']} benign level, while subtle "
+                   f"stays inside it", tuple(evidence))
 
 
 # ------------------------------------------------------------------- A7
 
 
 def check_a7(findings: Mapping[str, Sequence[Finding]],
-             seed_finding: Finding | None = None) -> Verdict:
-    """Leakage resistance: L1–L11 across the library."""
+             seed_finding: Finding | None = None,
+             calibration_finding: Finding | None = None) -> Verdict:
+    """Leakage resistance: L1–L11 across the library.
+
+    Two of the eleven are cross-dataset and arrive separately, because a
+    property of a *population* cannot be read off one realization: L8's seed
+    sensitivity, and — since ADR-027 — L7's null calibration, which scores the
+    exceedance rate over every fault-free world rather than asking each one to
+    clear a threshold on its own.
+    """
     evidence: list[str] = []
     failures: list[str] = []
     skipped: list[str] = []
@@ -457,10 +494,14 @@ def check_a7(findings: Mapping[str, Sequence[Finding]],
                 failures.append(f"{name}/{finding.test}: {finding.detail}")
             evidence.append(f"{name} {finding.test} [{finding.status}] "
                             f"{finding.detail}")
-    if seed_finding is not None:
-        evidence.append(f"L8 [{seed_finding.status}] {seed_finding.detail}")
-        if not seed_finding.passed and not seed_finding.skipped:
-            failures.append(f"L8: {seed_finding.detail}")
+    for extra in (seed_finding, calibration_finding):
+        if extra is None:
+            continue
+        evidence.append(f"{extra.test} [{extra.status}] {extra.detail}")
+        if extra.skipped:
+            skipped.append(extra.test)
+        elif not extra.passed:
+            failures.append(f"{extra.test}: {extra.detail}")
     if failures:
         return Verdict("A7", BLOCKED, "; ".join(failures), tuple(evidence))
     return Verdict("A7", PARTIAL,
@@ -516,6 +557,21 @@ def check_a8(datasets: Sequence[Any]) -> Verdict:
 # ------------------------------------------------------------------- A9
 
 
+#: The cohort-yield band A9's checklist has always carried, kept as a named
+#: constant so it can be *reported* without being *enforced*.
+#:
+#: ADR-027 retires it as a binding target and preserves it as a historical
+#: reference. Its provenance is `docs/audit/SYNTHETIC_DATA_AUDIT.md` #5, which
+#: decomposed the audited v1's ~12-point ETCH-02 deficit into 8.0 points of
+#: direct `-0.08 if bad_tool` label effect and ~3.7 points of mediated effect
+#: — so the band's own floor sits *above* what the legacy system produced
+#: through physics, and requiring it is requiring back the term ADR-004
+#: abolishes. ADR-026 §7 measured the ceiling on this side: the parametric
+#: channel disposes of 0.799 yield points in total on a healthy fab (0.905
+#: with no competing risk), against a 4-point floor.
+LEGACY_COHORT_BAND = (4.0, 10.0)
+
+
 def check_a9(demo: Any) -> Verdict:
     """Demo continuity — the qualitative checklist, scored honestly.
 
@@ -523,6 +579,16 @@ def check_a9(demo: Any) -> Verdict:
     (ADR-010). The checklist has five items; four are machine-checkable and
     the fifth is a manual wafer-map review. A criterion with an unrun manual
     item is not PASS, whatever the other four say.
+
+    **What ADR-027 changed.** The cohort-yield *magnitude* no longer blocks:
+    `LEGACY_COHORT_BAND` is reported as historical context, not enforced,
+    because it is unreachable through the only channel that could carry it and
+    because it is the magnitude of the direct label term the architecture
+    exists to remove. What still blocks is the item that is genuinely unmet —
+    the affected chamber's tool is *not* the worst etch tool on cohort yield,
+    which is a statement about ranking rather than about magnitude and which
+    no document has retired. Both are reported, so retiring the band cannot be
+    mistaken for retiring the criterion.
     """
     truth = demo.truth
     if not truth["events"]:
@@ -549,26 +615,40 @@ def check_a9(demo: Any) -> Verdict:
     # 3. unscheduled maintenance on the affected tool inside the window.
     repaired = event["maintenance_response"] is not None
 
+    low, high = LEGACY_COHORT_BAND
+    in_band = low <= deficit <= high
+    spread = max(tool_deficit.values()) - min(tool_deficit.values())
     evidence = [
         f"worst etch tool on cohort yield: {worst_tool} "
         f"({tool_deficit[worst_tool]:+.2f} pts); affected tool is {tool}",
-        f"affected chamber deficit {deficit:+.2f} pts (checklist wants 4-10)",
+        f"between-tool spread on cohort yield: {spread:.2f} pts, against a "
+        f"mechanism-attributable effect of 0.058 pts (ADR-025) - the "
+        f"ranking is benign-variation dominated",
+        f"affected chamber deficit {deficit:+.2f} pts; the legacy band "
+        f"{low}-{high} is reported as historical reference and is not "
+        f"enforced (ADR-027)",
         f"edge-ring share rank of {label}: {edge_rank}/{len(shares)}",
         f"unscheduled maintenance in the window: {repaired}",
         "wafer-map review: not run (manual item)",
     ]
-    met = [worst_tool == tool, 4.0 <= deficit <= 10.0, edge_rank == 1,
-           repaired]
-    if not (4.0 <= deficit <= 10.0):
+    met = [worst_tool == tool, edge_rank == 1, repaired]
+    if worst_tool != tool:
         return Verdict(
             "A9", BLOCKED,
-            f"the cohort yield deficit is {deficit:+.2f} pts against the "
-            "checklist's 4-10; ADR-021 records the two identified causes and "
-            "the constant that would change it is one this criterion forbids "
-            "moving. The manual wafer-map item is also unrun.", tuple(evidence))
+            f"the affected tool {tool} is not the worst etch tool on cohort "
+            f"yield ({worst_tool} is, at {tool_deficit[worst_tool]:+.2f} pts "
+            f"against {tool_deficit.get(tool, float('nan')):+.2f}). This is a "
+            "ranking failure, not a magnitude one: the between-tool benign "
+            f"spread is {spread:.2f} pts and the mechanism contributes 0.058, "
+            "so which tool ranks worst on yield is decided by benign "
+            "variation. Whether demo continuity should keep a yield item at "
+            "all is the open decision ADR-027 records. The manual wafer-map "
+            "item is also unrun.", tuple(evidence))
     return Verdict("A9", PARTIAL,
-                   f"{sum(met)}/4 machine-checkable items met; the wafer-map "
-                   "review is manual and has not been run", tuple(evidence))
+                   f"{sum(met)}/3 machine-checkable items met "
+                   f"(legacy band {'met' if in_band else 'not met'}, "
+                   "reported only); the wafer-map review is manual and has "
+                   "not been run", tuple(evidence))
 
 
 # ------------------------------------------------------------------- A10

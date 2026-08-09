@@ -42,6 +42,7 @@ from fabeval.queries import (
 )
 
 __all__ = [
+    "A6_EVIDENCE_CHANNELS",
     "CHANNELS",
     "MINIMUM_FLOOR_SEEDS",
     "FloorReading",
@@ -49,6 +50,7 @@ __all__ = [
     "channel_scores",
     "natural_variation_floor",
     "severity_sweep",
+    "summarize",
 ]
 
 #: The reference channels A6 names for the equipment-fault scenarios:
@@ -169,9 +171,24 @@ def natural_variation_floor(nulls: Sequence[Any],
     return out
 
 
+#: The channels A6's own text names as the evidence to be recovered:
+#: "B/G chamber-grain yield split + edge-zone defect elevation + edge-CD
+#: shift". `alarms` is in `CHANNELS` because the criterion's temporal
+#: alignment is read off it, but A6 does not list it as evidence, so it
+#: corroborates and cannot satisfy the criterion by itself. Taking the
+#: criterion's own list rather than the wider one is deliberate: the wider one
+#: would let the strongest channel carry a criterion that never asked for it.
+A6_EVIDENCE_CHANNELS = ("edge_cd", "edge_defect_share", "yield_split")
+
+
+def _chamber_count(reading: SweepReading, channel: str) -> int:
+    return reading.standing[channel][2]
+
+
 def summarize(readings: Sequence[SweepReading],
-              floor: Mapping[str, FloorReading]) -> dict[str, Any]:
-    """The two questions A6 asks, answered from the readings.
+              floor: Mapping[str, FloorReading],
+              alpha: float | None = None) -> dict[str, Any]:
+    """The two questions A6 asks, answered against a converging reference.
 
     * **difficulty axis** — does the realized shift rise with the configured
       severity, and does at least one channel rise with it? A6's own words
@@ -180,12 +197,32 @@ def summarize(readings: Sequence[SweepReading],
       already documents as non-monotone (alarm counts saturate against the
       refractory window; a signed latent's defect channel can go either way,
       ADR-018).
-    * **separation at moderate** — does the planted chamber, at moderate,
-      exceed the floor on any channel? This is the half A6 words as
-      "recovers each scenario's intended evidence at moderate severity", and
-      it is the strict reading: ranking first is not separation, because on a
-      null world some chamber always ranks first.
+    * **separation at moderate** — does the planted chamber's standing, at
+      moderate, exceed what a *benign* chamber reaches? This is the half A6
+      words as "recovers each scenario's intended evidence at moderate
+      severity", and ranking first is not enough, because on a null world some
+      chamber always ranks first.
+
+    **What changed in ADR-027, and why.** The second question used to be asked
+    against `natural_variation_floor` — the worst chamber over every null
+    world built. ADR-026 measured that quantity to be a cumulative maximum
+    with no limit: 2.31 at one null seed, 2.84 at three, 5.38 at twelve. A
+    criterion read against it is a function of how many nulls the benchmark
+    could afford, and it compares *one specified chamber* against a *maximum
+    over seven chambers and every seed*. It is now asked against the
+    per-chamber exchangeable reference (`fabeval.reference`), which is the
+    like-for-like comparison and which converges. The floor is still measured
+    and still reported as evidence — it is a real quantity — but it is no
+    longer a threshold.
+
+    Every standing is additionally reported as an **exceedance probability**:
+    how often a benign chamber reaches at least that far. That is the
+    currency the difficulty axis is actually about, and unlike sigma it means
+    the same thing on a channel read at 7 chambers and one read at 18.
     """
+    from fabeval.reference import ALPHA, exchangeable_reference
+
+    level = ALPHA if alpha is None else alpha
     by_severity = {r.severity: r for r in readings}
     realized = [r.realized_sigma for r in readings]
     rising = all(a < b for a, b in zip(realized, realized[1:]))
@@ -198,25 +235,45 @@ def summarize(readings: Sequence[SweepReading],
                                                 in zip(values, values[1:])):
             monotone.append(channel)
 
+    exceedance: dict[str, dict[str, float]] = {}
+    for reading in readings:
+        row: dict[str, float] = {}
+        for channel, (sigma, _rank, count) in reading.standing.items():
+            row[channel] = exchangeable_reference(
+                count).per_chamber_exceedance(sigma)
+        exceedance[reading.severity] = row
+
     separated: list[str] = []
     moderate = by_severity.get("moderate")
     if moderate is not None:
-        for channel, (sigma, _rank, _n) in moderate.standing.items():
-            if channel in floor and sigma > floor[channel].worst:
+        for channel in A6_EVIDENCE_CHANNELS:
+            if channel in moderate.standing \
+                    and exceedance["moderate"][channel] < level:
                 separated.append(channel)
+
+    corroborating: list[str] = []
+    if moderate is not None:
+        for channel in moderate.standing:
+            if channel not in A6_EVIDENCE_CHANNELS \
+                    and exceedance["moderate"][channel] < level:
+                corroborating.append(channel)
 
     subtle = by_severity.get("subtle")
     at_floor = True
     if subtle is not None:
-        at_floor = all(sigma <= floor[channel].worst
-                       for channel, (sigma, _r, _n) in subtle.standing.items()
-                       if channel in floor)
+        at_floor = all(exceedance["subtle"][channel] >= level
+                       for channel in subtle.standing)
 
     return {
         "realized_rises_with_severity": rising,
         "realized": realized,
         "monotone_channels": monotone,
+        "alpha": level,
+        "exceedance": {s: {c: round(p, 4) for c, p in row.items()}
+                       for s, row in exceedance.items()},
         "separated_at_moderate": separated,
-        "subtle_at_or_below_floor": at_floor,
+        "corroborating_at_moderate": corroborating,
+        "subtle_within_benign_range": at_floor,
+        # Kept as reported evidence, never as a threshold (ADR-026 §6).
         "floor": {c: round(f.worst, 2) for c, f in floor.items()},
     }

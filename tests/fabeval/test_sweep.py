@@ -143,46 +143,76 @@ def test_a6_refuses_an_undersampled_floor(sweep_datasets, nulls):
     assert "null realization" in verdict.detail
 
 
-def test_a6_is_partial_because_moderate_does_not_clear_the_floor(
+def test_a6_is_partial_because_moderate_does_not_clear_benign_variation(
         sweep_datasets, nulls):
-    """The measured verdict, with its evidence.
+    """The measured verdict, with its evidence (ADR-027).
 
-    At moderate the planted chamber reaches edge_cd 2.65, edge_defect_share
-    2.34, alarms 4.34 and yield_split 1.25; the three-seed floor is 2.84,
-    3.29, 5.05 and 2.26. Ranking first is not separation - on a null world
-    some chamber always ranks first.
+    The comparison is now one *specified* chamber against single benign
+    chambers — the exchangeable per-chamber reference — rather than against a
+    maximum over every chamber of every null world, which ADR-026 measured to
+    diverge with the seed count.
+
+    On A6's own three evidence channels the planted chamber at moderate
+    reaches exceedance probabilities of 0.076 (edge CD), 0.105 (edge-defect
+    share) and 0.339 (yield split) against a declared level of 0.05. It clears
+    on alarms (0.0009), which A6 does not list as evidence and which therefore
+    corroborates rather than satisfies. The verdict is unchanged; the reason
+    now converges.
     """
+    from fabeval.sweep import A6_EVIDENCE_CHANNELS
+
     readings = severity_sweep(sweep_datasets, LABEL)
     floor = natural_variation_floor(nulls)
     outcome = summarize(readings, floor)
-    moderate = next(r for r in readings if r.severity == "moderate")
 
-    for channel, (sigma, _rank, _total) in moderate.standing.items():
-        assert sigma <= floor[channel].worst, (
-            channel, sigma, floor[channel].worst)
+    for channel in A6_EVIDENCE_CHANNELS:
+        assert outcome["exceedance"]["moderate"][channel] >= outcome["alpha"], \
+            (channel, outcome["exceedance"]["moderate"][channel])
     assert outcome["separated_at_moderate"] == []
+    assert outcome["corroborating_at_moderate"] == ["alarms"], \
+        outcome["corroborating_at_moderate"]
+    assert outcome["subtle_within_benign_range"], outcome["exceedance"]
 
     verdict = check_a6([], sweep=sweep_datasets, nulls=nulls)
     assert verdict.status == PARTIAL
-    assert "does not exceed the natural-variation floor" in verdict.detail
+    assert "does not clear" in verdict.detail
+    assert "corroborates" in verdict.detail
 
 
 def test_a6_would_report_pass_if_the_evidence_were_there(sweep_datasets,
                                                          nulls):
     """A6's PARTIAL is a measurement, not a stub.
 
-    Feed the summarizer a floor the moderate reading really does clear and it
-    reports separation — so today's PARTIAL says something about the
-    simulator rather than about the checker.
+    Score the same readings at a level the moderate rung really does clear and
+    separation is reported — so today's PARTIAL says something about the
+    simulator rather than about the checker. The level is moved here and
+    nowhere else: `reference.ALPHA` is declared at 0.05 and this test does not
+    change it.
     """
-    from dataclasses import replace
+    readings = severity_sweep(sweep_datasets, LABEL)
+    floor = natural_variation_floor(nulls)
+    outcome = summarize(readings, floor, alpha=0.2)
+    assert outcome["separated_at_moderate"], \
+        "a fifth-probability level must be clearable at moderate"
+
+
+def test_a6_blocks_if_subtle_stops_being_hard(sweep_datasets, nulls):
+    """The difficulty axis has two ends, and the other one is checkable too.
+
+    A subtle fault that separated from benign variation would mean the hard
+    rung had stopped being hard. Scored at a level subtle clears, A6 must
+    block rather than celebrate.
+    """
+    from fabeval.acceptance import BLOCKED
 
     readings = severity_sweep(sweep_datasets, LABEL)
     floor = natural_variation_floor(nulls)
-    lowered = {c: replace(f, worst=f.worst / 4.0) for c, f in floor.items()}
-    outcome = summarize(readings, lowered)
-    assert outcome["separated_at_moderate"], \
-        "a quarter-height floor must be clearable"
+    outcome = summarize(readings, floor, alpha=0.4)
+    assert not outcome["subtle_within_benign_range"], outcome["exceedance"]
+
+    verdict = check_a6([], sweep=sweep_datasets, nulls=nulls, alpha=0.4)
+    assert verdict.status == BLOCKED
+    assert "no hard rung" in verdict.detail
 
 
 def test_the_sweep_changes_nothing_on_disk(sweep_datasets, nulls):

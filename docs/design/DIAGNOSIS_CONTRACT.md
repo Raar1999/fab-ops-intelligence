@@ -158,8 +158,14 @@ number does:
 * **Calibrate against the null's per-chamber distribution, never against its
   worst chamber.** The second is an order statistic that diverges with the
   number of null worlds you build; a threshold read off it is a threshold that
-  measures your budget. This is §8.2's open decision, and it now has a
-  measured direction.
+  measures your budget. This is §8.2's open decision, and ADR-027 has now
+  built the instrument it needs: `fabeval.reference` derives the distribution
+  of the per-chamber statistic under exchangeability, exposes a critical value
+  at a declared level and an exceedance probability for any standing, and
+  depends on no dataset — so an abstention threshold read off it is calibrated
+  against the null world without being fitted to it. The engine must not
+  import it (§6.1 forbids importing `fabeval`); what it may inherit is the
+  *method*, and the numbers above are what that method reports.
 * **One channel is not enough even though one channel is not nothing.** At
   p ≈ 0.06 per channel, an engine that ranks seven chambers on edge CD alone
   will name the wrong one often. Yield in particular carries *no* severity
@@ -214,7 +220,11 @@ architecture-invention Part 11 forbids:
    single-channel score.
 2. **The abstention threshold.** What evidence level makes
    `insufficient_evidence` the answer — and it must be calibrated against the
-   null worlds, never against the faulted ones.
+   null worlds, never against the faulted ones. *Partly advanced by ADR-027*:
+   the calibration object now exists and has a declared level (0.05 for
+   screening, the fab's own 3-sigma convention for an action limit). What is
+   still open is which of the two an abstention threshold should use, and how
+   evidence combines across channels before it is compared to either.
 3. **Onset estimation.** Which change-point statistic, and whether onset is
    reported per candidate or per dataset.
 4. **Whether `Investigation` is `fabops.investigation/v1`** (ADR-008's

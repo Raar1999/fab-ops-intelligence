@@ -38,7 +38,8 @@ from fabeval.queries import (
     zscore,
 )
 
-__all__ = ["Finding", "LEAKAGE_TESTS", "run_leakage_suite"]
+__all__ = ["CROSS_DATASET_TESTS", "Finding", "L7_CHANNELS", "LEAKAGE_TESTS",
+           "l7_null_calibration", "run_leakage_suite"]
 
 #: Tokens L1 forbids anywhere in the observable schema or its vocabularies.
 _FORBIDDEN_TOKENS = ("fault", "truth", "scenario", "bad", "marginal",
@@ -398,18 +399,59 @@ def _overlap_coefficient(left: Sequence[float],
     return sum(min(a, b) for a, b in zip(histogram(left), histogram(right)))
 
 
-def l7_null_blindness(dataset: Any, floor: float = 2.5) -> Finding:
-    """On a null, no chamber may stand out beyond the natural-variation floor.
+#: The three reference channels L7 reads. Named here because both halves of
+#: L7 must read the same ones, or the calibration would be measuring a
+#: different population from the guard.
+L7_CHANNELS = ("edge_cd", "edge_defect_share", "yield_split")
+
+
+def l7_null_blindness(dataset: Any,
+                      alpha: float | None = None) -> Finding:
+    """On a null, no chamber may stand out beyond the fab's own action limit.
 
     The reference queries are run unchanged on a world with nothing wrong in
-    it. The floor is expressed in leave-one-out σ across chambers, which is
-    the same currency the fault scenarios are reported in — so "below the
-    floor" and "above it" are the same measurement, not two.
+    it, and each chamber's leave-one-out standing is compared against a
+    critical value **derived** from the exchangeable null at a declared level
+    (`fabeval.reference`). The shape of the check is what it always was; what
+    changed in ADR-027 is that the number is derived instead of assumed.
+
+    The level is the fab's own control-limit convention — 3 sigma, the
+    multiple eight of the nine `alarms.codes` in `baseline_fab_v1` declare,
+    i.e. a per-chamber false-alarm rate of 0.0027. That anchor is not
+    decoration: this check runs on every null dataset of every build, so it
+    needs an *action* limit rather than a screening one, which is the same
+    reason a real fab charts at 3 sigma and not at 2. The evaluator therefore
+    borrows the convention the simulated fab already declares rather than
+    inventing one.
+
+    ADR-026 measured what the previous constant did. `2.5` was a per-chamber
+    figure applied to a maximum over seven chambers, and the maximum of seven
+    exchangeable draws exceeds it with probability 0.598; across three
+    channels that is a failure on roughly nine fault-free worlds in ten, and
+    10 of 12 was measured. A check that fails on a correct null is not
+    measuring the null.
+
+    **What this can and cannot catch, measured rather than claimed.** Poisoning
+    one chamber's `cd_nm_edge` in a null database: a 10% shift reaches 10.8
+    sigma and fails, a 30% shift reaches 19.2 and fails, a 5% shift reaches
+    4.7 and passes. The floor sits between 5% and 10%. The old constant
+    "caught" a 2% shift, but it also flagged nine healthy worlds in ten and
+    at 2% it named the *wrong* chamber — that is not sensitivity, it is a
+    check that was always firing. Structure spread across many chambers, which
+    is what a generator defect would actually produce, is the other half's
+    job: see `l7_null_calibration`.
     """
+    from fabeval.reference import (
+        FAB_CONTROL_LIMIT_ALPHA,
+        exchangeable_reference,
+    )
+
     if dataset.truth["events"]:
         return Finding("L7 null blindness", True, "not a null scenario",
                        skipped=True)
+    level = FAB_CONTROL_LIMIT_ALPHA if alpha is None else alpha
     worst: list[str] = []
+    limits: list[str] = []
     for name, scores in (("edge CD", _values(chamber_edge_cd(dataset))),
                          ("edge share",
                           _values(chamber_edge_defect_share(dataset.db_path))),
@@ -417,13 +459,59 @@ def l7_null_blindness(dataset: Any, floor: float = 2.5) -> Finding:
                           _values(chamber_yield_split(dataset.db_path)))):
         if len(scores) < 3:
             continue
+        limit = exchangeable_reference(
+            len(scores)).per_chamber_critical(level)
+        limits.append(f"{name} {limit:.2f}")
         extremes = {label: abs(zscore(scores, label)) for label in scores}
         top = max(extremes, key=extremes.get)
-        if extremes[top] > floor:
-            worst.append(f"{name}: {top} at {extremes[top]:.2f}sigma")
+        if extremes[top] > limit:
+            worst.append(f"{name}: {top} at {extremes[top]:.2f}sigma "
+                         f"against a {limit:.2f} action limit")
     return Finding("L7 null blindness", not worst,
-                   "no chamber above the floor" if not worst
-                   else "; ".join(worst))
+                   (f"no chamber above the action limit "
+                    f"(alpha {level}, limits: {', '.join(limits)})")
+                   if not worst else "; ".join(worst))
+
+
+def l7_null_calibration(nulls: Sequence[Any]) -> Finding:
+    """L7's other half: is the null population itself correctly sized?
+
+    The guard above judges one world and asks whether its *worst* chamber is
+    grossly out. That is the right question for an analyst, and it is nearly
+    blind to the failure a generator would actually produce: chamber-to-chamber
+    structure spread thinly across the whole population, where no single world
+    looks alarming and every world is a little out.
+
+    So the population is scored too. Every chamber of every fault-free world,
+    on every reference channel, is compared against the per-chamber critical
+    value at the declared `reference.ALPHA`, and the realized exceedance rate
+    must not exceed that level by more than chance. A screening level rather
+    than an action limit here, because this is where power matters and there
+    is one verdict rather than one per dataset.
+
+    Cross-dataset, like L8, and for the same reason: a rate is not a property
+    of one realization. It refuses fewer than `MINIMUM_NULL_WORLDS` rather
+    than reporting a rate from too few draws, and it reports the smallest
+    inflation the sample it was given could actually resolve — a calibration
+    check that cannot say how blind it is will be read as though it were not.
+    """
+    from fabeval.reference import MINIMUM_NULL_WORLDS, null_calibration
+
+    fault_free = [d for d in nulls if not d.truth["events"]]
+    if len(fault_free) < MINIMUM_NULL_WORLDS:
+        return Finding("L7 null calibration", True,
+                       f"{len(fault_free)} fault-free world(s); a rate needs "
+                       f"at least {MINIMUM_NULL_WORLDS}", skipped=True)
+    reading = null_calibration(fault_free, L7_CHANNELS)
+    detail = (f"{reading.exceedances}/{reading.observations} chamber "
+              f"observations beyond the alpha={reading.alpha} limit "
+              f"(rate {reading.rate:.4f}, expected {reading.alpha:.4f}) over "
+              f"{reading.worlds} fault-free worlds; per channel "
+              + ", ".join(f"{c} {h}/{n}"
+                          for c, (h, n) in sorted(reading.per_channel.items()))
+              + f"; this sample resolves an inflation of "
+                f"x{reading.detectable_inflation:.1f} or more")
+    return Finding("L7 null calibration", not reading.inflated, detail)
 
 
 def chamber_edge_cd(dataset: Any) -> dict[str, Any]:
@@ -544,11 +632,23 @@ def l11_reference_recovery(dataset: Any,
 #: runner knows which is which rather than forcing one signature on all.
 LEAKAGE_TESTS = ("L1", "L2", "L3", "L4", "L5", "L6", "L7", "L9", "L10", "L11")
 
+#: The checks that read a *population* rather than a dataset, and therefore
+#: cannot appear in `run_leakage_suite`. L8 has always been one; ADR-027 makes
+#: L7's calibration half the second, because an exceedance rate is not a
+#: property of one realization. Both are assembled by `fabeval.matrix`.
+CROSS_DATASET_TESTS = ("L7 null calibration", "L8 seed sensitivity")
+
 
 def run_leakage_suite(dataset: Any,
                       expectation: Mapping[str, Any] | None = None
                       ) -> list[Finding]:
-    """Every per-dataset leakage check. L8 is cross-dataset; see the matrix."""
+    """Every per-dataset leakage check.
+
+    L8 is cross-dataset and so, since ADR-027, is L7's calibration half; see
+    `CROSS_DATASET_TESTS` and `fabeval.matrix.evaluate`. L7's per-dataset
+    *action limit* is still here, because "is any chamber of this world
+    grossly out?" genuinely is a property of this world.
+    """
     return [
         l1_schema_token_lint(dataset),
         l2_plane_separation(dataset),

@@ -8,19 +8,19 @@
 
 `src/fabeval/` scores A1-A11 over the five-scenario library and reports one of three verdicts. `PARTIAL` is used deliberately and often: several criteria have a half this gate settles and a half that needs CI or a manual review, and calling those PASS would make the matrix a worse instrument than no matrix. Since the A9/A6 review gate, A6's severity sweep runs (`fabeval.build_sweep`) and its PARTIAL is a measurement rather than an unbuilt check. Run with `fabeval.build_library` + `fabeval.evaluate`; `fabeval.render` prints the table below.
 
-**Three of these rows are now known to be about the criteria rather than about the simulator (ADR-026).** A6's floor and A7's L7 both threshold a maximum over chambers against a number that means one chamber's standing, so both would return the same verdict on a simulator of any quality and neither can be moved by any world constant; A9's band is the magnitude of the direct label effect ADR-004 abolishes. **Nothing was changed to make any of them green** — not a threshold, not a seed count, not a world constant, not a verdict. What each needs is a decision, and the options are recorded in ADR-026 rather than taken there.
+**Three of these rows were about the criteria rather than about the simulator (ADR-026), and ADR-027 settles two of them.** A6's floor and A7's L7 both thresholded a maximum over chambers against a number that means one chamber's standing; both now read against a *derived null reference distribution* (`src/fabeval/reference.py`) at a declared level, which converges and which no world constant can move. A9's numeric band is retired as binding and preserved as a historical reference. **Nothing was made green by relaxation**: A6 stays PARTIAL, A9 stays BLOCKED for a truer reason, A7 becomes PARTIAL because its check stopped measuring an order statistic, and no criterion became PASS.
 
 | | Status | What is outstanding |
 |---|---|---|
 | A1 | PARTIAL | checks 1-3 green on every scenario; check 4 (reference-image `fab.db` byte compare) is a CI-environment job |
 | A2 | **PASS** | - |
-| A3 | PARTIAL | the null is populated, varied and no quieter than the fault scenarios; the "full integrity suite" half is A4 and the L7/L10 half is A7 - which is now BLOCKED on L7, so A3's delegated half is unmet too |
+| A3 | PARTIAL | the null is populated, varied and no quieter than the fault scenarios; the "full integrity suite" half is A4 and the L7/L10 half is A7 |
 | A4 | **PASS** | - |
 | A5 | PARTIAL | onset placement and the alarm->repair ordering hold; the metrology->defect->yield *series* ordering is not asserted (see below) |
-| A6 | PARTIAL | the sweep runs and the difficulty axis exists; at moderate the planted chamber does **not** exceed the natural-variation floor on any single reference channel - and that floor is now measured to be a divergent order statistic rather than a property of the fab (ADR-026) |
-| A7 | **BLOCKED** | L7 fails on the null at seeds 101 and 2024 (worst chamber 3.29 / 2.84 sigma), and on 10 of 12 fault-free worlds once enough were built; the failure rate is what L7's own statistic produces on a *correct* null (ADR-026) |
+| A6 | PARTIAL | the difficulty axis exists at both ends - realized severity rises and subtle stays inside benign variation - but at moderate the planted chamber clears the declared level on none of the three channels A6 names as evidence (p = 0.076 / 0.105 / 0.338); it clears on alarms, which corroborates (ADR-027) |
+| A7 | PARTIAL | L1-L11 green where applicable, including both halves of L7; 18 checks are inapplicable to their dataset, which is why this is not PASS |
 | A8 | PARTIAL | chamber usage and etch independence hold; recipe and benign-offset items belong to A4 and 3C |
-| A9 | **BLOCKED** | the cohort yield deficit is +0.47 pts against 4-10, the wafer-map review is manual, and the 4-10 band is measured unreachable and contradicts the criterion's own prose (ADR-025, verified independently in ADR-026 §7: the parametric channel disposes of 0.80 yield points in total) |
+| A9 | **BLOCKED** | the affected tool is not the worst etch tool on cohort yield (ETCH-03 is), a *ranking* failure the between-tool benign spread explains; the 4-10 band is retired as binding and reported as historical reference; the wafer-map review is manual and unrun (ADR-027) |
 | A10 | **PASS** | - |
 | A11 | PARTIAL | the legacy artifacts are present and still schema v1; the 27-test behavioural half is the test suite's |
 
@@ -126,6 +126,22 @@ Raising `MINIMUM_FLOOR_SEEDS` from 1 to 3 was right about the direction and wron
 
 Subtle sits near the detection floor; moderate is detectable on two channels and monotone in severity on both. Yield alone carries no severity information at these magnitudes, which A9's finding explains. The world was not retuned to obtain this — it is what the existing world already does when the comparison is like-for-like.
 
+*As decided (the architecture decision gate), A6 reads against a declared reference and stays **PARTIAL** — for a reason that is now a statement about the simulator rather than about the evaluator's budget.* **ADR-027**; three parts.
+
+**The reference.** The planted chamber's standing is converted to an **exceedance probability** against `fabeval.reference` — how often a benign chamber reaches at least that far, derived from exchangeability and the chamber count. That currency converges, and unlike sigma it means the same thing on a channel read at 7 chambers and one read at 18. `natural_variation_floor` is retained and still reported as evidence, but it is no longer a threshold.
+
+**The measurement**, against the declared `ALPHA = 0.05`:
+
+| | edge_cd | edge_defect_share | yield_split | *alarms* |
+|---|---|---|---|---|
+| subtle (1.61σ) | 0.173 | 0.137 | 0.372 | *0.063* |
+| moderate (3.22σ) | 0.076 | 0.105 | 0.338 | ***0.001*** |
+| obvious (4.00σ) | 0.051 | 0.119 | 0.335 | ***0.002*** |
+
+**The verdict, and the two decisions inside it.** A6's evidence channels are **the three its own text names** — "chamber-grain yield split + edge-zone defect elevation + edge-CD shift". `alarms` is carried because the criterion's temporal alignment is read off it, but A6 does not list it as evidence, so it corroborates and cannot satisfy the criterion alone; letting the strongest channel carry a criterion that never asked for it is how a benchmark quietly becomes easier. And the difficulty axis is now checkable from **both** ends: subtle must stay inside benign variation (it does, on all four channels) and moderate must clear it (it does not, on any declared one). A subtle rung that separated now *blocks* A6 — a failure mode the old formulation could not express, and one a test exercises.
+
+So the evidence A6 asks for is present and multi-channel, and no single declared query recovers it at moderate. Combining channels is the diagnosis engine's job (`DIAGNOSIS_CONTRACT.md` §5), which is why the benchmark was built first.
+
 ### A7 — Leakage resistance
 Full anti-leakage suite L1–L11 green on all five library datasets. Highlighted: L3 mediation residual ≤ 2 pts (the audited 8-pt direct effect is dead), L4 no perfectly separating categorical, L5 classifier confusion in band, L8 seed sensitivity.
 
@@ -138,6 +154,15 @@ Full anti-leakage suite L1–L11 green on all five library datasets. Highlighted
 3. **No world constant can move it.** `zscore` divides by the realized between-chamber spread and is invariant under any common rescaling or shift, so the null distribution of `max|z|` depends on the chamber count and on no magnitude the world declares. Measured across six world calibrations spanning 16× in benign latent offset and 20× in observation-plane chamber offset: fourteen of eighteen fault-free worlds fail, and a fifth of the declared benign chamber variation fails exactly as often as the baseline.
 
 **The threshold was not lowered, the null was not put back to fewer seeds, and no simulator constant was touched** — the last would have been pointless as well as forbidden. A7 stays BLOCKED because correcting L7 means deciding what "below the subtle-severity floor" compares, and that decision belongs to an architecture gate (ADR-026 lists three options). The measurement is pinned by `tests/fabeval/test_floor_semantics.py` so it cannot be lost.
+
+*As decided (the architecture decision gate), A7 is **PARTIAL**.* **ADR-027** replaced L7's undeclared constant with the distribution of its own statistic under exchangeability, and split the criterion into the two questions it was conflating — see `ANTI_LEAKAGE_DESIGN.md` §3.8 for the full statement.
+
+1. **A per-world action limit.** No chamber on a null may exceed the per-chamber critical value at the fab's *own* control-limit convention (3σ, the multiple eight of nine `alarms.codes` declare — 6.46 at seven chambers). Measured: **0 of 12** fault-free worlds trip it; the worst chamber ever seen is 5.38.
+2. **A population calibration**, cross-dataset like L8: the exceedance rate over every fault-free world, at the declared screening level 0.05, must not be inflated beyond chance. Measured: **9/252 = 0.036** against 0.050 expected on twelve worlds, **1/63 = 0.016** on the three the library builds, and **0/252** at the fab's stricter 3σ level.
+
+**A7 is PARTIAL and not PASS** because 18 checks are inapplicable to their dataset — a null has no affected cohort, so L3/L4/L6/L10 have nothing to separate, and L7 does not apply to a faulted one. Counting those as passes would be counting checks that never ran.
+
+**What the correction cost, stated rather than glossed.** Against the derived limit, a poisoned null is caught at a 30% single-chamber shift (19.2σ) and at 10% (10.8σ), and a 5% shift passes (4.7σ). The old constant caught 2% — while flagging nine healthy worlds in ten, and while naming the *wrong* chamber at 2%. What was given up is a check that fired on the benign structure rule F11 requires the null to contain; the mutation test still fails on a poisoned null, and the population half covers the failure mode no per-world threshold can see.
 
 ### A8 — Entity realism
 On every dataset: ≥ 2 chambers per multi-chamber tool actually used; per-chamber run counts nonzero for qualified chambers; gate-etch vs metal-etch tool assignments independent (contingency association ≈ 0, breaking the audited collinearity); recipes resolve per product×step; measurable (benign) tool/chamber offsets exist in null data; product mix spread over lots and time (no one-lot-per-week artifact). On a dataset carrying a routing condition: the dedicated tool's share of the dedicated product's traffic rises inside the window and falls back outside it, while the dedicated product still reaches other qualified tools, other products still reach the dedicated tool, and every qualified chamber of the dedicated tool still carries traffic — dedication moved exposure probability, not eligibility (ADR-015).
@@ -169,8 +194,16 @@ The classification is therefore **(D) an acceptance-interpretation issue compoun
 
 **The documentary contradiction is wider than A9.** The same band appears as "≈ 4–8 pts" in `CAUSAL_MECHANISM_MODEL.md` §8 and `SCENARIO_SPECIFICATION.md` §4 B, and all three trace to `docs/audit/SYNTHETIC_DATA_AUDIT.md` #5 — which contains the decisive number: *"of ETCH-02's ~12-pt deficit, 8.0 pts are this direct label effect, only ~3.7 pts flow through defects."* **The audited v1's own mediated remainder was 3.7 points, below the band's own 4-point floor.** The band was never reachable through mediation in the system it was measured from. Nothing was changed; the number stays in all three documents, annotated, until a decision retires or restates it.
 
+*As decided (the architecture decision gate), **the band is retired as binding and preserved as a historical reference** — and A9 stays BLOCKED, on a different item.* **ADR-027** §6.
+
+**The band.** Its provenance settles it: a legacy numerical observation of a system whose deficit was two-thirds direct label effect, promoted to a numerical target, contradicting A9's own prose and ADR-010, and unreachable by a factor of at least 4.4. `fabeval.acceptance.LEGACY_COHORT_BAND` keeps the number and `check_a9` reports it in the evidence at every verdict; it no longer gates. A test pins both halves, so retiring it cannot become deleting it and cannot quietly become enforcing it again.
+
+**What blocks A9 now.** With the band out of the way the checklist's first item fails on its own terms: *the affected chamber's tool is worst of the three etch tools on cohort yield* — and it is not. ETCH-03 is, at −0.16 pts against ETCH-02's −0.08. That is a **ranking** failure rather than a magnitude one, and its cause is measured: the between-tool benign spread on cohort yield is **0.41 pts** against a mechanism-attributable effect of **0.058 pts**, so which tool ranks worst on yield is decided by benign variation at every severity.
+
+**The open decision, stated so the next gate can take it.** Whether demo continuity should keep a yield item at all is *not* settled here, because both answers have consequences no evaluator change can contain: dropping the item changes what the project's flagship demo claims, and making the item reachable means recalibrating the composition ADR-026 §1 identified — ADR-018 §4's deliberately un-amplified observation transfer against ADR-021 §5's 3.0-tolerance functional limit — which moves every dataset and needs its own gate. The band was retired because its provenance settles it; the item is not, because its provenance does not.
+
 `demo_edge_uniformity` (scenario B, default seed) reproduces a **statistically equivalent** ETCH-02 story, defined as this checklist — not exact numbers:
-- the affected chamber's tool is worst of the three etch tools on cohort yield; deficit in 4–10 pts *(unchanged, and measured to be unreachable — see the finding above; the parametric channel that would have to carry it disposes of 0.80 yield points in total on a healthy fab, and the audited v1's own mediated remainder was 3.7 points, below this band's floor. The number stays here until a decision retires or restates it, because deleting it would be weakening the criterion rather than resolving it)*;
+- the affected chamber's tool is worst of the three etch tools on cohort yield **(binding, and currently unmet — ETCH-03 ranks worst; see the finding above)**; ~~deficit in 4–10 pts~~ *(**retired as binding by ADR-027 §6 and preserved as a historical reference.** It is the magnitude of the audited `−0.08 if bad_tool` term: the v1 deficit it was read from was 8.0 points of direct label effect and ~3.7 points mediated, so the band's own floor sits above what the legacy system produced through physics. The parametric channel that would have to carry it in FabSim disposes of 0.80 yield points in total on a healthy fab. `fabeval.acceptance.LEGACY_COHORT_BAND` keeps the number and the check reports it; nothing gates on it)*;
 - elevated edge-ring share and edge-zone defect concentration on the affected chamber's wafers;
 - unscheduled maintenance present on the affected tool within the fault window;
 - wafer maps visibly show the edge-ring signature (manual review of regenerated figures);

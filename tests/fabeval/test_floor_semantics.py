@@ -1,8 +1,11 @@
-"""What A6's floor and L7's threshold actually measure (ADR-026).
+"""What A6's floor and L7's threshold measured before ADR-027 (ADR-026).
 
-These tests do not assert that the benchmark passes. They assert the *reason*
-it does not, so that the reason cannot be quietly lost — and so that a future
-gate cannot repeat the two mistakes this one found.
+These tests do not assert that the benchmark passes. They are the record of
+why the previous references could not work, kept as executable arithmetic so
+that a future gate cannot repeat either mistake and cannot mistake the
+correction for a relaxation. What replaced them is pinned in
+`tests/fabeval/test_reference.py`; `natural_variation_floor` still exists and
+is still reported as evidence, but it is no longer a threshold.
 
 The finding: `fabeval.sweep.natural_variation_floor` and
 `fabeval.leakage.l7_null_blindness` both reduce a fault-free world to
@@ -42,9 +45,10 @@ SCENARIO_ROOT = Path(__file__).resolve().parents[2] / "scenarios"
 #: 17 because it is not restricted to an operation.
 ETCH_CHAMBERS = 7
 
-#: `fabeval.leakage.l7_null_blindness`'s default floor. Referenced, never
-#: redefined: if the constant moves, these tests must be re-read rather than
-#: silently kept green.
+#: The constant `l7_null_blindness` used until ADR-027 replaced it with a
+#: value derived from the exchangeable null. It is kept here as a *historical*
+#: figure, because the arithmetic below is the record of why it could not
+#: work; `tests/fabeval/test_reference.py` pins what stands in its place.
 L7_FLOOR = 2.5
 
 

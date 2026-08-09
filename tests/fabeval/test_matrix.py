@@ -98,22 +98,23 @@ def test_every_dataset_has_a_distinct_identity_and_content(report):
     assert len({row.build_fingerprint for row in report.rows}) == len(report.rows)
 
 
-def test_the_leakage_suite_finds_only_the_known_l7_failures(report):
-    """L1-L11 over every row, with the one open finding named.
+def test_the_leakage_suite_is_green_on_every_row(report):
+    """L1-L11 over every row, with nothing outstanding.
 
-    Everything passes except L7 on the null at seeds 101 and 2024 (ADR-025 §5,
-    and the dedicated test above). Naming it here rather than asserting an
-    empty list keeps the suite honest in both directions: the known failure
-    does not have to be re-discovered on every run, and anything *else* that
-    starts failing still lands as a failure.
+    Until ADR-027 this test named two expected failures — L7 on the null at
+    seeds 101 and 2024. Those are gone, and it matters *why*: not because a
+    threshold was lowered but because L7's threshold is now derived from the
+    exchangeable null at the fab's own 3-sigma convention instead of being a
+    per-chamber constant applied to a maximum over seven chambers. ADR-026
+    measured the old constant failing 10 of 12 fault-free worlds.
+
+    The mutation tests below are what stop this from being a vacuous green: a
+    poisoned null must still fail L7, and it does.
     """
     failures = [(row.scenario, row.seed, finding.test, finding.detail)
                 for row in report.rows for finding in row.leakage
                 if not finding.passed and not finding.skipped]
-    unexpected = [f for f in failures
-                  if not (f[0] == "null_baseline" and f[2].startswith("L7"))]
-    assert unexpected == []
-    assert {seed for _s, seed, _t, _d in failures} == {101, 2024}, failures
+    assert failures == []
 
 
 def test_the_report_renders_without_a_console_encoding_problem(report):
@@ -159,7 +160,8 @@ def test_the_criteria_the_library_settles_are_green(report, criterion):
         report.verdict(criterion).detail
 
 
-@pytest.mark.parametrize("criterion", ["A1", "A3", "A5", "A6", "A8", "A11"])
+@pytest.mark.parametrize("criterion",
+                         ["A1", "A3", "A5", "A6", "A7", "A8", "A11"])
 def test_the_partly_testable_criteria_are_reported_as_partial(report,
                                                               criterion):
     """Not PASS, and not BLOCKED either. Each of these has a half this gate
@@ -167,50 +169,64 @@ def test_the_partly_testable_criteria_are_reported_as_partial(report,
     saying PASS would make the matrix a worse instrument.
 
     A6 is here on its measured reading: the sweep runs, the difficulty axis
-    exists, and the recovery half does not clear the null floor. A7 left this
-    list when the leakage suite began to be scored at every seed.
+    exists, subtle stays inside benign variation, and moderate does not clear
+    the declared level on any channel A6 names as evidence. A7 returned to
+    this list in ADR-027, when L7's threshold stopped being a per-chamber
+    constant applied to a maximum over chambers; it is PARTIAL rather than
+    PASS because four checks are inapplicable to a null.
     """
     verdict = report.verdict(criterion)
     assert verdict.status == PARTIAL, f"{criterion}: {verdict.detail}"
     assert verdict.detail
 
 
-def test_a7_is_blocked_by_the_null_it_could_not_see_before(report):
-    """A7 scored one seed and reported green; scoring all of them, it is not.
+def test_a7_reports_the_null_calibration_it_now_measures(report):
+    """A7's L7 half is a population reading, and the evidence must show it.
 
-    The leakage suite already ran on every dataset in the matrix, but the
-    verdict was built from the seed-42 rows alone, so two L7 failures sat in
-    the report's own rows while A7 said "L1-L11 green". That is fixed, and
-    what the fix reveals is a real property of the world, not a checker bug:
-    on a fault-free build the worst chamber reaches 3.29 sigma at seed 101.
+    The per-world guard says no chamber is grossly out; the calibration says
+    the population as a whole is correctly sized. Both belong in the evidence,
+    because "L7 passed" without a rate is the kind of claim ADR-026 found
+    hiding an 83% failure rate.
     """
     verdict = report.verdict("A7")
-    assert verdict.status == BLOCKED
-    assert "L7" in verdict.detail and "null_baseline" in verdict.detail
+    assert verdict.status == PARTIAL
+    calibration = [line for line in verdict.evidence
+                   if "L7 null calibration" in line]
+    assert calibration, verdict.evidence
+    assert "expected" in calibration[0] and "resolves an inflation" in \
+        calibration[0]
 
 
-def test_a9_is_blocked_for_the_reason_the_design_records(report):
+def test_a9_is_blocked_on_the_item_that_is_actually_unmet(report):
     """A9 is *statistical equivalence*, never a replay of the legacy numbers
-    (ADR-010) — and it is blocked on the cohort yield deficit, which ADR-021
-    already explains and which no constant here may be moved to fix."""
+    (ADR-010).
+
+    Until ADR-027 it blocked on the 4-10 point cohort band — a number traced
+    to the audited v1's direct label term and measured unreachable through the
+    only channel that could carry it. The band is now reported as historical
+    reference and the criterion blocks on what is genuinely unmet: the
+    affected tool is not the worst etch tool on cohort yield, which is a
+    ranking failure the between-tool benign spread explains.
+    """
     verdict = report.verdict("A9")
     assert verdict.status == BLOCKED
-    assert "yield deficit" in verdict.detail
-    assert "4-10" in verdict.detail
+    assert "worst etch tool" in verdict.detail
+    assert "ranking failure" in verdict.detail
     assert any("wafer-map" in line for line in verdict.evidence)
+    # The retired band is reported, not deleted.
+    assert any("historical reference" in line for line in verdict.evidence)
 
 
-def test_exactly_two_criteria_are_blocked_and_both_are_measurements(report):
-    """A7 joined A9 in the A9/A6 review gate, and neither is a stub.
+def test_only_a9_is_blocked_and_it_is_a_measurement(report):
+    """A7 left this list in ADR-027 and A9 did not.
 
-    A9 is blocked on a cohort yield deficit ADR-025 measures as unreachable at
-    any setting of the constant that governs it; A7 on L7 failing at two of
-    three null seeds, which only became visible once the null was built at
-    more than one seed and every row was scored. Pinning the pair keeps the
-    matrix from drifting green quietly — a criterion may only leave this list
-    by being earned.
+    A7 is no longer blocked because its check stopped measuring an order
+    statistic; A9 still is, because the yield channel genuinely cannot rank
+    the affected tool and no document has yet decided whether demo continuity
+    should keep a yield item at all. Pinning the list keeps the matrix from
+    drifting green quietly — a criterion may only leave it by being earned.
     """
-    assert report.blocked == ("A7", "A9")
+    assert report.blocked == ("A9",)
 
 
 # ------------------------------------------------------- scenario behaviour
@@ -233,35 +249,51 @@ def test_scenario_i_shows_the_whole_arc_in_order(built):
     assert "condition alarm" in detail
 
 
-def test_the_null_stays_below_the_floor_at_the_published_seed(built):
-    """Seed 42 only, which is the seed `scenarios/README.md` publishes and the
-    baseline the mutation test below poisons. It is *not* the general claim —
-    see the next test."""
-    finding = l7_null_blindness(primary(built, "null_baseline"))
-    assert finding.passed and not finding.skipped, finding.detail
+def test_the_null_clears_the_action_limit_at_every_seed(built):
+    """The verdict ADR-027's derived limit produces, at all three seeds.
 
+    Under the old constant this failed at seeds 101 and 2024 — and at 10 of
+    12 fault-free worlds once enough were built (ADR-026 §2), because 2.5 is a
+    per-chamber figure that the maximum of seven exchangeable chambers exceeds
+    with probability 0.598. The limit is now the fab's own 3-sigma convention
+    carried into the leave-one-out currency, which is 6.46 at seven chambers.
 
-def test_l7_fails_on_the_null_at_two_of_three_seeds(built):
-    """The finding, pinned rather than hidden (ADR-025 §5).
-
-    L7 asks that no chamber on a fault-free world stand out beyond the
-    natural-variation floor, and the implementation reads that floor as a
-    fixed 2.5 sigma. Built at one seed the null cleared it; built at three it
-    does not — ETCH-02/A reaches 3.29 sigma on edge-defect share at seed 101
-    and ETCH-03/A reaches 2.84 sigma on edge CD at seed 2024.
-
-    The check was left exactly as it was. Lowering its bar, or going back to
-    sampling the null once, would be manufacturing the green. What is pinned
-    here is the measurement: two failures, both L7, both on the null. A third
-    failure, or one anywhere else, still breaks this test.
+    This is a green that had to be earned twice over: the mutation test below
+    shows the same check still fails on a poisoned null, and
+    `test_reference.py` pins the derivation of the number.
     """
-    failures = [(seed, finding.detail)
-                for (scenario, seed), copies in built.items()
-                if scenario == "null_baseline"
-                for finding in [l7_null_blindness(copies[0])]
-                if not finding.passed and not finding.skipped]
-    assert len(failures) == 2, failures
-    assert {seed for seed, _ in failures} == {101, 2024}, failures
+    for (scenario, seed), copies in sorted(built.items()):
+        if scenario != "null_baseline":
+            continue
+        finding = l7_null_blindness(copies[0])
+        assert finding.passed and not finding.skipped, (seed, finding.detail)
+        assert "action limit" in finding.detail
+
+
+def test_the_null_population_is_correctly_sized(built):
+    """L7's other half: the rate over every fault-free world.
+
+    A generator defect would put structure on many chambers a little rather
+    than on one chamber a lot, and no per-world threshold would see it. This
+    is the check that would, and it reports the rate it measured rather than
+    only a verdict.
+    """
+    from fabeval.leakage import l7_null_calibration
+
+    nulls = [copies[0] for (scenario, _seed), copies in built.items()
+             if scenario == "null_baseline"]
+    finding = l7_null_calibration(nulls)
+    assert finding.passed and not finding.skipped, finding.detail
+    assert "expected" in finding.detail
+    assert "resolves an inflation" in finding.detail
+
+
+def test_the_calibration_refuses_a_population_too_small_to_be_a_rate(built):
+    """One null world is not a rate, and saying so beats reporting one."""
+    from fabeval.leakage import l7_null_calibration
+
+    finding = l7_null_calibration([primary(built, "null_baseline")])
+    assert finding.skipped, finding.detail
 
 
 # ------------------------------------------------------------- mutations
@@ -278,6 +310,14 @@ def test_a_false_positive_in_the_null_is_caught(built, tmp_path):
     `fab.db`, and the same check that passes on the untouched null must fail
     on the poisoned one. Anything less would be testing the helper rather than
     the check.
+
+    **The detection floor, measured and stated rather than implied** (ADR-027).
+    Against the derived action limit this catches a 10% single-chamber shift
+    (10.8 sigma) and a 30% one (19.2 sigma), and lets a 5% one through (4.7
+    sigma). The old 2.5 constant "caught" a 2% shift — while flagging nine
+    healthy worlds in ten, and while naming the *wrong* chamber at 2%. That is
+    not sensitivity the correction gave away; it is a check that was firing on
+    the benign structure rule F11 requires the null to contain.
     """
     import shutil
     import sqlite3
@@ -391,20 +431,24 @@ def test_a10_notices_an_invalid_truth_file(built):
     assert verdict.status == BLOCKED and "invalid truth" in verdict.detail
 
 
-def test_a9_would_notice_a_deficit_inside_the_checklist_band(built):
+def test_a9_would_notice_a_demo_whose_yield_story_held(built):
     """The A9 check is not hard-wired to fail.
 
-    It reports BLOCKED today because the measured deficit is +0.47 pts, not
-    because the function cannot report anything else. Feeding it a yield table
-    where the affected chamber really does lose 4-10 points moves the verdict
-    — which is what makes today's BLOCKED a measurement rather than a stub.
+    It reports BLOCKED today because the affected tool is not the worst etch
+    tool on cohort yield, not because the function cannot report anything
+    else. Feeding it a yield table where the affected chamber really does lose
+    six points makes its tool the worst and moves the verdict — which is what
+    makes today's BLOCKED a measurement rather than a stub.
+
+    Never PASS: the manual wafer-map item is unrun and no arithmetic can run
+    it. And the retired band is still *reported* in the evidence at both
+    verdicts, so retiring it cannot be mistaken for deleting it.
     """
     demo = primary(built, DEMO_SCENARIO)
     verdict = check_a9(demo)
     assert verdict.status == BLOCKED
+    assert any("historical reference" in line for line in verdict.evidence)
 
-    # A deficit inside the band is reported as PARTIAL (the manual wafer-map
-    # item is still unrun), never as PASS.
     from fabeval import acceptance
     from fabeval.queries import ChamberScore
 
@@ -423,3 +467,25 @@ def test_a9_would_notice_a_deficit_inside_the_checklist_band(built):
         acceptance.chamber_yield_split = real
     assert moved.status == PARTIAL
     assert "wafer-map" in " ".join(moved.evidence)
+    assert any("historical reference" in line for line in moved.evidence)
+
+
+def test_a9_still_reports_the_retired_band_and_never_enforces_it(built):
+    """The band is retired as binding and preserved as a reference (ADR-027).
+
+    Both halves are pinned: the number is still in the evidence with its
+    range, and a deficit outside it no longer decides the verdict. A future
+    edit that quietly deletes the number, or one that quietly starts gating on
+    it again, breaks this.
+    """
+    from fabeval.acceptance import LEGACY_COHORT_BAND
+
+    assert LEGACY_COHORT_BAND == (4.0, 10.0)
+    verdict = check_a9(primary(built, DEMO_SCENARIO))
+    band_lines = [line for line in verdict.evidence if "4.0-10.0" in line]
+    assert band_lines, verdict.evidence
+    assert "not enforced" in band_lines[0]
+    # The measured deficit is far outside the band, and that is not why the
+    # criterion blocks.
+    assert "4-10" not in verdict.detail
+    assert "ranking failure" in verdict.detail
