@@ -317,7 +317,7 @@ The difficulty axis exists — realized severity rises 1.61 → 3.22 → 4.00 an
 
   This is the third sighting of one fact — findings 1 and 4 are the other two — and the open question it raises is now sharp enough to state: the benign chamber-to-chamber spread the world carries by design (F10/F11) may be larger than the subtle rung was calibrated to sit above. That is a world-calibration decision that moves every dataset, and like A9's it belongs to a gate of its own. **The floor was not raised, the world was not retuned, and the null was not put back to one seed** — the last of those would have restored the green by unlearning the measurement. `test_l7_fails_on_the_null_at_two_of_three_seeds` pins it in both directions: a third failure, or a failure anywhere but L7-on-the-null, still breaks the suite.
 
-**6. Diagnosis stops at the design gate, because its contract did not exist.** ADR-003 states the rule, ADR-005 that evaluation gates the claim, ADR-007 that statistics precede ML, ADR-008 names an output artifact — but nothing said what the engine is handed, what it returns, or how a conclusion is scored. `docs/design/DIAGNOSIS_CONTRACT.md` now says: the entry point takes a **path to `fab.db`** and nothing else (a dataset directory would put `truth/` one join away); the output is a ranked set of candidates each carrying falsifiable evidence, a mandatory `considered[]` of rejected hypotheses, and `insufficient_evidence` as a first-class answer; five static checks and one runtime invariance test (rewrite every hidden record, leave `fab.db` byte-identical, the report must not move) are specified. Five open decisions — the score's definition, the abstention threshold, the onset statistic, the artifact's schema name, and where the package lives — are recorded rather than guessed, because guessing them is the architecture-invention this gate forbids.
+**6. Diagnosis stops at the design gate, because its contract did not exist.** ADR-003 states the rule, ADR-005 that evaluation gates the claim, ADR-007 that statistics precede ML, ADR-008 names an output artifact — but nothing said what the engine is handed, what it returns, or how a conclusion is scored. `docs/design/DIAGNOSIS_CONTRACT.md` now says: the entry point takes a **path to `fab.db`** and nothing else (a dataset directory would put `truth/` one join away); the output is a ranked set of candidates each carrying falsifiable evidence, a mandatory `considered[]` of rejected hypotheses, and `insufficient_evidence` as a first-class answer; five static checks and one runtime invariance test (rewrite every hidden record, leave `fab.db` byte-identical, the report must not move) are specified. Five open decisions — the score's definition, the abstention threshold, the onset statistic, the artifact's schema name, and where the package lives — are recorded rather than guessed, because guessing them is the architecture-invention this gate forbids. *(All five are closed by **ADR-029**; the contract's §8 keeps them with their answers.)*
 
 *What changed in code.* `fabeval` gained `sweep.py` and a sweep-aware `check_a6`; `build_library` now builds the null at three seeds so the floor has more than one draw; `evaluate` scores the leakage suite on every row rather than on seed 42's. Nothing under `src/fabsim/` or `src/fabops/` was touched, no threshold was moved, and no check was relaxed. Two criteria moved, both downward and both on measurement: **A6 stays PARTIAL with a measured reason instead of an unbuilt one, and A7 drops from PARTIAL to BLOCKED.**
 
@@ -445,7 +445,7 @@ Correcting A6 and L7 means choosing what they should compare instead, and that i
 
 A9's three options are unchanged from ADR-025 §3, with one addition this gate's §7 supports: any restatement of the band should be derived from the parametric channel's measured budget rather than from the legacy cohort gap.
 
-**Diagnosis remains blocked.** `DIAGNOSIS_CONTRACT.md` §5's measured warning was read off the defective comparison and is corrected there: an engine ranking chambers on one statistic does **not** score at chance on the null — moderate reaches p = 0.018 on alarms and p = 0.060 on edge CD. The contract's *conclusion* is unaffected and better supported: the evidence is multi-channel and temporal, no single channel is decisive, and §8's five open decisions still have to be made before an engine is written.
+**Diagnosis remains blocked.** *(Unblocked by **ADR-029**.)* `DIAGNOSIS_CONTRACT.md` §5's measured warning was read off the defective comparison and is corrected there: an engine ranking chambers on one statistic does **not** score at chance on the null — moderate reaches p = 0.018 on alarms and p = 0.060 on edge CD. The contract's *conclusion* is unaffected and better supported: the evidence is multi-channel and temporal, no single channel is decisive, and §8's five open decisions still have to be made before an engine is written.
 
 ## ADR-027 — The null reference distribution: one derived object, three criteria read against it; A9's legacy band retired as binding
 
@@ -522,7 +522,7 @@ Two decisions inside that table. **A6's evidence channels are the three its own 
 
 **8. What changed, and what did not.** Changed: `src/fabeval/reference.py` (new), `sweep.summarize`, `leakage.l7_null_blindness` + `l7_null_calibration`, `acceptance.check_a6`/`check_a7`/`check_a9`, `matrix.evaluate`, their tests, and the design documents these findings touch. **Unchanged: `src/fabsim/`, `src/fabops/`, `app/`, `data/`, `sql/`, `scenarios/`, every world constant, and the legacy v1 surfaces.** One verdict moved, on measurement: **A7 BLOCKED → PARTIAL**, because its check stopped measuring an order statistic. **A6 stays PARTIAL** and **A9 stays BLOCKED** — A9 on a different and truer item, which is a strengthening rather than a relaxation: it used to block on something provably unreachable, and now blocks on something a better-composed model could actually satisfy. **Nothing became PASS.**
 
-**9. Diagnosis is still not authorized**, and the blocker is now precise. ADR-026 corrected `DIAGNOSIS_CONTRACT.md` §5's measurement; this gate gives §8's open decision 2 — the abstention threshold, which "must be calibrated against the null worlds, never against the faulted ones" — the instrument it lacked, since `reference.py` is exactly that calibration and is engine-independent. Four of the five open decisions remain (the score's definition, the onset statistic, the artifact's schema name, and where the package lives), and A9's yield-item question is open. Diagnosis waits on those, not on the benchmark.
+**9. Diagnosis is still not authorized**, and the blocker is now precise. ADR-026 corrected `DIAGNOSIS_CONTRACT.md` §5's measurement; this gate gives §8's open decision 2 — the abstention threshold, which "must be calibrated against the null worlds, never against the faulted ones" — the instrument it lacked, since `reference.py` is exactly that calibration and is engine-independent. Four of the five open decisions remain (the score's definition, the onset statistic, the artifact's schema name, and where the package lives), and A9's yield-item question is open. Diagnosis waits on those, not on the benchmark. *(**Superseded by ADR-029.** All five are now closed, and the engine's abstention no longer reads `reference.py` at all: it calibrates against a within-dataset candidate permutation. `reference.py` remains the **evaluator's** instrument, which is what it was built for.)*
 
 ## ADR-028 — Cohort yield is a downstream consequence in the demo-continuity gate, not an attribution channel
 
@@ -571,4 +571,110 @@ At seed 2024 the planted chamber is the *sixth worst of seven* — nearly the be
 
 **9. One thing noticed and deliberately not acted on, recorded so it is not rediscovered.** A9's *remaining* gating signature item — "elevated edge-ring share on the affected chamber's wafers", scored as rank 1 — is seed-fragile in exactly the way ADR-024 §5 already documents for L11: the planted chamber ranks **1st at seed 42, 3rd at 101 and 6th at 2024**, because `edge_uniformity` is signed and the defect channel reads its magnitude. A9 is scored on the demo at its *published default seed*, which is the criterion's own declared scope, so the item holds where A9 asks it. But a future gate that scores A9 across seeds will find a failure ADR-024 has already explained, and the honest fix then is the one `fabeval.fixtures` already applied — mark the channel corroborating and require the metrology channel instead. That is a change to a different item than this ADR's, in a session scoped to one question, so it is left alone.
 
-**10. Diagnosis.** A9's resolution determines none of `DIAGNOSIS_CONTRACT.md` §8's four remaining open decisions (the score's definition, the onset statistic, the artifact's schema name, the engine's location). Diagnosis is now blocked **only** on those. One thing it does settle for the engine's designer: yield is not the channel to rank chambers on in this scenario, and the contract's §5 warning against single-channel scoring now has a third measured example behind it.
+**10. Diagnosis.** A9's resolution determines none of `DIAGNOSIS_CONTRACT.md` §8's four remaining open decisions (the score's definition, the onset statistic, the artifact's schema name, the engine's location). Diagnosis is now blocked **only** on those. One thing it does settle for the engine's designer: yield is not the channel to rank chambers on in this scenario, and the contract's §5 warning against single-channel scoring now has a third measured example behind it. *(**ADR-029** closes those four decisions and authorizes the engine.)*
+
+## ADR-029 — Diagnosis is one self-calibrating stage: a shared anchor, a within-dataset permutation null, and a statistic that is deliberately not frozen
+
+**Status: Accepted (2026-08-09), from the diagnosis architecture decision gate.** Four measurement gates preceded it and none of their findings had reached this file; that is corrected here. **No `src/fabsim/` change, no world constant, no scenario edit, no acceptance threshold moved** — every number below was obtained by scoring datasets the simulator already produces, with thresholds read only from fault-free worlds.
+
+This entry is long because it is the record of what was rejected. Each rejection cost a gate, and a gate that is not written down is a gate that will be repeated.
+
+**1. What was measured, and what it rejected.** Four candidate architectures were built and scored against the same populations. Held-out fault datasets and held-out fault-free worlds were built from seeds disjoint from every development seed, and every threshold is a quantile of fault-free worlds alone.
+
+| # | Architecture | Measured outcome | Verdict |
+|---|---|---|---|
+| 1 | **Magnitude-primary** — rank candidates on a whole-horizon level | Rules F10/F11 put permanent benign offsets in the `subtle` band by design; under matched multiplicity discipline the planted candidate reached family-wise significance on **0 of 22** development datasets and 1–3 of 25 held-out | **Rejected** |
+| 2 | **Temporal-primary** — a within-candidate change point as the sole primary evidence | Better than magnitude on development (5/22 against 0/22) but the advantage **did not replicate**: held-out 4/25 against 1–3/25, a difference of no significance at that size. Its natural derived null is 1.7–2.6× anti-conservative, and its proposed within-candidate permutation null cannot express `alpha = 0.05` at all — a K-bin series has K rotations, so the smallest attainable p is 1/K, i.e. 0.08–0.11 | **Rejected as the *sole* primary evidence** |
+| 3 | **More evidence** — the same rule at 2× and 4× the horizon, fault magnitude held constant | Null calibration held (0.025 at every scale) and detection did **not** improve: 3/30 → 1/30 → 3/30 held-out. The planted candidate's statistic stayed flat (2.74 / 3.16 / 2.75 on the cleanest channel) while the benign one grew (1.65 / 1.83 / 1.90) | **Rejected**; ADR-012's ceiling stands, now measured rather than asserted |
+| 4 | **Two-stage, with a fab-level excursion-detection stage** | At matched null rates a candidate-free stage 1 fires on **1 of 25** held-out faults against the candidate-enumerating maximum's **7 of 25** | **Rejected** |
+
+**Why (4) fails is physics rather than an implementation accident.** For a single-entity alternative the maximum over entities is the powerful statistic and an omnibus is not; a fab-level statistic discards exactly the information that makes one faulted chamber findable. It is also *structurally* harder to calibrate: exchangeable candidates yield one null draw **per candidate per world** (1,117 over the calibration population) while a fab-level scalar yields one **per world** (60). A separate detection stage therefore needs roughly the candidate count in extra fault-free worlds to reach the same resolution, and buys negative power for it.
+
+**2. The one thing a scope was measured to buy, and what it actually is.** Attribution was scored under four time anchors, paired over the same 25 held-out faults, everything else identical:
+
+```
+                                   rank-1   top-3    MRR    detected
+A  per-candidate scan               7/25    13/25   0.481     4/25
+B  declared midpoint anchor        11/25    15/25   0.574     4/25
+C  fab-level change-point anchor   11/25    15/25   0.574     6/25
+D  ORACLE anchor at truth's onset  10/25    16/25   0.568     3/25
+E  random anchor (three draws)    8,8,14  16,16,19  .51/.51/.69
+```
+
+**B = C = D, and random anchors span the same range.** Knowing the true onset buys nothing over an arbitrary constant. The whole effect is that a benign candidate wins a *per-candidate* maximization more often than a faulted one does — with more bins, more benign excursions compete, which is exactly the mechanism finding (3) isolated. Paired McNemar against A: B 6 wins / 2 losses (p = 0.29), C 5/1 (p = 0.22), D 4/1 (p = 0.38).
+
+**The decision.** The change point is a **shared nuisance parameter, estimated once and applied to every candidate** — never a per-candidate free parameter. This is enforced structurally rather than by review: a candidate's evidence is computed at anchors it was not consulted about, and `fabops.diagnosis.anchors` is the only module that may choose one.
+
+**What is deliberately *not* decided:** *which* anchor rule. Variant B works on this library because every planted fault onsets at day 30–40 of 84, which is a benchmark artefact and must not become architecture. The anchor rule is a declared, versioned component selected by a benchmark that does not yet exist (§5).
+
+**3. The null lives inside the dataset, so no calibration artifact exists.** `DIAGNOSIS_CONTRACT.md` §2 gives the engine a database path and nothing else, and every size-based statistic needs a null. Until this gate the only candidates were a derived reference (measured invalid for the temporal statistic) or an external fault-free corpus — which would have created the `fabeval` → diagnosis control path the plane separation exists to forbid, and a provenance problem with no clean answer.
+
+Neither is needed. Under F10/F11 the candidates of a fault-free world are exchangeable, so a candidate's *vector* of channel statistics is exchangeable with any other candidate's. Permuting the candidate label **jointly within an evidence family and independently across families** preserves every channel's marginal distribution *and* the real within-family dependence (metrology↔fdc r = 0.445), and destroys only what convergence is about: the same candidate being extreme in several near-independent families at once.
+
+Measured on 65 fault-free worlds (binomial standard error .012 / .027 / .037 / .050):
+
+```
+                        p<=.01   p<=.05   p<=.10   p<=.20
+family-joint, anchored    .000     .062     .092     .231
+expected                  .010     .050     .100     .200
+```
+
+Valid within noise at every level. The earlier per-channel-independent permutation reads .015 / .092 / .169 / .292 — anti-conservative, *because* it destroyed within-family dependence that exists under the null. The difference between those two permutations is the whole of the design, which is why both are recorded.
+
+**Consequence.** `diagnose(db_path)` is self-calibrating. There is no calibration artifact to version, ship, invalidate or prove independent, and no path by which the evaluator can reach the engine. The validity assumption is a *declared, falsifiable* property of the world, and the measurement above is a test the simulator can fail.
+
+**The limit, stated plainly.** Exchangeability is a property of *this* world's construction. A world variant, or a real fab, would need the same measurement re-run before the null could be trusted. That is a feature: it is checkable, and the check ships.
+
+**4. What the engine estimates — and what it cannot.** The concepts were conflated across four gates and are separated here:
+
+| term | the object |
+|---|---|
+| **evidence** | a *residual*: an observation minus the fab's own reference for it (a recipe setpoint, a recipe `metric_target`) |
+| **anchor** | a shared change point — a nuisance parameter, never a conclusion |
+| **abstention** | one family-wise statement per dataset: is any candidate more extreme than candidate-label permutation produces |
+| **attribution** | a *ranking* over entity hypotheses, with the alternatives it was compared against |
+| **onset** | a separate estimate on the attributed candidate's own series, reported as an interval and permitted to be absent |
+
+**"Root cause" in this project means entity attribution, not mechanism identification, and that is a boundary rather than a shortfall.** The mechanism lives only in the hidden plane: ADR-019 §4 makes `classified_type` a noisy draw over a hidden origin, and ADR-021 §6 makes a bin a symptom drawn over a hidden cause. No observable channel identifies which mechanism acted, by construction. An engine that named one would be matching a catalogue — which `DIAGNOSIS_CONTRACT.md` §6.4 already forbids. `fabeval` scores attribution and onset; it does not score mechanism naming, and no later version may add that without first giving the observable plane a channel that could carry it.
+
+**5. The statistic is not frozen, and that is the decision.** Nothing measured across four gates distinguishes the statistic variants at the size of the current benchmark: the anchor comparison's paired tests sit at p = 0.22–0.38, and the spread across random anchors (8 to 14 of 25) is larger than the effect being estimated. Freezing a statistic here would be fitting the architecture to five scenarios.
+
+So the architecture is one in which the statistic is a **declared, versioned, replaceable component** behind a stable API, and the benchmark is what selects it. Until the library reaches `EXPANSION_ROADMAP` Phase 6's ≥ 10 scenarios with a declared development/held-out split, **the engine may not claim a benchmark number.** `fabeval` reports diagnosis metrics as *measured on a named population*, never as a capability claim.
+
+**6. The roadmap's `investigate <excursion>` sketch is superseded.** `EXPANSION_ROADMAP` Phase 5 sketches `fabops investigate <excursion>`, with Phase 4 producing the excursion; `DIAGNOSIS_CONTRACT.md` §2 gives the engine a database path. The conflict is settled in favour of the contract, on two grounds and not on preference:
+
+1. **Measurement.** §1 finding (4): a separable detection stage is 7× weaker and harder to calibrate. There is no statistical stage to separate.
+2. **Anti-leakage.** If detection is separately callable and diagnosis consumes its output, answer-blindness becomes a property of the *caller*: a hand-built excursion carrying truth's window is a leakage channel through the argument list. This is precisely why §2 already rejected a `Dataset` argument. One entry point keeps the guarantee structural.
+
+**What is retained rather than dropped:** the Excursion *object* — window, onset, scope — becomes a **field of the `Investigation`**, an output instead of an upstream input. Monitors (Phase 3) remain a legitimate separate capability over a database path producing SPC output a human reads; they are simply not a precondition of diagnosis. The roadmap's dependency *order* survives in substance — you cannot explain a change you have not located — but locating and explaining are one deterministic computation behind one entry point.
+
+This is a **governance correction, not an architecture change**: the roadmap is a Phase 0 planning document and the contract is the later, more specific governing artifact. The roadmap is annotated, not rewritten.
+
+**7. What this decides, and what it leaves open.** Decided: the engine is single-stage and self-calibrating; `diagnose(db_path) -> Investigation` is the sole public entry point; the anchor is shared; the null is a within-dataset family-joint permutation; the artifact is `fabops.investigation/v1`; the package is `src/fabops/diagnosis/`; root cause means entity attribution. `DIAGNOSIS_CONTRACT.md` §8's five open decisions are closed by this ADR.
+
+Open, and deliberately: which anchor rule, which per-candidate statistic, and what the abstention level should be for a *fab* rather than for a benchmark. All three wait on the benchmark of §5.
+
+**8. Four corrections the implementation forced, and the configuration that shipped.** This ADR was accepted before the engine existed, and building it falsified four things the gate had assumed. None changes the architecture — one entry point, one stage, no calibration artifact, family-joint permutation, `not_assessable` — and all four change what "the same architecture" has to do to be correct. Each is pinned by a test.
+
+  * **The anchor must be *declared*, not discovered.** §2 proposed reading the shared change point out of the fab's own aggregate. That aggregate is a series the candidates *are*: the entity that moves the fab creates the anchor it is then scored at, and a permutation that starts after the anchor exists cannot reproduce that selection. Measured on 200 fault-free worlds, the fab-chosen anchor made the engine fire at **0.200 against a nominal 0.05**. `anchors.select` is now handed the horizon and nothing else, so a candidate cannot reach it. The cost is real and stated: the engine cannot adapt to a world whose faults arrive somewhere unusual, and the present library cannot measure that because every fault in it begins mid-horizon.
+
+  * **Peers are exchangeable within a *role*, not across a fab.** The first implementation ranked every chamber against every other chamber. A chamber every wafer passes through and a chamber a third of them reach are not draws from one distribution, and that is the permutation null's only precondition. Grouping candidates by `tools.tool_type` — ordinary observable data — is most of what moved the null back to its declared level. Rule F10/F11 gives exchangeability *within* the equipment population it describes; reading it as a fab-wide property was the error.
+
+  * **The denominator decides whether convergence means anything.** A spread pooled over a stratum is more precise per candidate and measurably **not calibrated**: exposure differs by routing, so a lightly-used candidate's series is noisier, its standardized step is larger on *every* channel at once, and that is precisely the shape cross-family convergence exists to detect. Standardizing by each candidate's own spread restores the null. It costs most of the engine's measured power, and the trade is deliberate — an abstention is a claim, a mis-calibrated claim is worse than a weak one, and §5 already forbids claiming a benchmark number until the library can support one.
+
+  * **The family-wise maximum has to be studentized.** The raw combined score is not comparable across strata: a rank inside a stratum of eighty-four recipes reaches 1/85 while a rank inside a stratum of seven chambers stops at 1/8, so a raw maximum is decided by whichever stratum is largest rather than by whichever candidate moved. Measured before the fix, poisoning one chamber on three evidence families moved that chamber's own p-value from 0.394 to 0.019 while the fab-wide statement moved from 0.151 to 0.141 — the engine saw it and the abstention could not. Each candidate is now standardized against its own permutation distribution before the maximum is taken, in a second pass over the same seeded draws.
+
+  **The configuration that shipped, and the two-by-two it was chosen from.** Selection was made on **fault-free calibration and non-inertness only**; the held-out fault column is reported and was not selected on.
+
+```
+variant                        null .01/.05/.10/.20      30% 3-family mutation   held-out det / rank-1
+sidak + own-scale  (SHIPPED)   .010 / .060 / .110 / .205   fires at p = 0.049       1/25 / 6/25
+sidak + pooled                 .010 / .075 / .125 / .240   fires at p = 0.017       7/25 / 5/25
+no-sidak + own-scale           .015 / .065 / .125 / .225   ABSTAINS at p = 0.073    0/25 / 7/25
+no-sidak + pooled              .005 / .085 / .145 / .255   fires at p = 0.007       6/25 / 7/25
+nominal                        .010 / .050 / .100 / .200   must fire
+```
+
+  The shipped row is the only one that is both calibrated at every declared level and able to be moved. The Sidak *inside* a family survives for a reason worth stating precisely: it is not there to control an error rate — the permutation does that exactly — it is a monotone transform that buys **separation**, and removing it made every candidate's family evidence shrink together, which moved the permuted maximum as much as the observed one and left the engine unable to be moved at all.
+
+  **What the engine's power actually is, stated plainly.** One held-out fault in twenty-five clears the fab-wide bar, and the planted chamber leads the ranking in six. That is weak, it is measured, and it is not hidden: §5 forbids a benchmark claim until the library reaches ten scenarios with a declared split, and the statistic registry exists so that benchmark can choose a stronger member from a table rather than from folklore.

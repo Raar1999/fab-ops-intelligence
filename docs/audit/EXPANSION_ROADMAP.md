@@ -47,6 +47,8 @@ Rule for every phase: the existing demo (`ETCH-02` story, README, notebook) **mu
 - **Acceptance:** `fabops monitor` lists rule hits/trends on the demo scenario; quiet on the null scenario.
 - **Value:** the platform starts *watching* the fab instead of retelling one story.
 
+> **Superseded in part by ADR-029 (2026-08-09), for Phases 4 and 5 only. The text below is left exactly as written — it is the audit-era plan and it stays the record of what was planned.** Two things in it were measured and did not hold. (a) A *separable* detection stage is not a statistically real stage: a candidate-free fab-level detector fires on 1 of 25 held-out faults where the candidate-enumerating maximum fires on 7, and it needs roughly the candidate count in extra fault-free worlds to calibrate. (b) `investigate <excursion>` makes answer-blindness a property of the caller, since a hand-built excursion is a leakage channel through the argument list. So the **Excursion becomes a field of the `Investigation`** — window, onset, scope, as an *output* — and the public entry point is `diagnose(db_path)`, per `DIAGNOSIS_CONTRACT.md` §2. The dependency order this roadmap derives (you cannot explain a change you have not located) is unchanged in substance; locating and explaining are one deterministic computation behind one entry point. Phase 3 monitors remain a legitimate separate capability and are simply not a precondition of diagnosis.
+
 ## Phase 4 — Excursion detection (P1, medium)
 - **Objective:** first-class Excursion objects: signal, onset estimate, scope (lots/wafers/steps/window), severity.
 - **Modules:** `src/fabops/detection/excursion.py`; persistence into an `excursions` table.
