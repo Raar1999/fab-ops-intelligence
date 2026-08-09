@@ -150,3 +150,39 @@ def test_the_evaluator_still_writes_nothing():
             if isinstance(node, ast.Attribute) and node.attr in forbidden:
                 assert "build_library" in path.name or path.name == "matrix.py", \
                     f"{path.name} calls .{node.attr}()"
+
+
+def test_onset_error_is_measured_when_the_clock_is_supplied(library):
+    """Truth records an onset as an instant, a report speaks in days, and
+    neither artifact alone carries the conversion.
+
+    Supplied with the observable `time_origin` the metric is measured; without
+    it the metric must say so rather than silently report a perfect zero.
+    """
+    import sqlite3
+
+    record = library["chamber_edge_uniformity"]
+    report = diagnose(record["db_path"]).to_dict()
+    truth = truth_of(record)
+
+    connection = sqlite3.connect(str(record["db_path"]))
+    try:
+        origin = connection.execute(
+            "SELECT time_origin FROM dataset_meta").fetchone()[0]
+    finally:
+        connection.close()
+
+    without = score_dataset(report, truth, "chamber_edge_uniformity")
+    with_clock = score_dataset(report, truth, "chamber_edge_uniformity", origin)
+
+    assert without.onset_error_days is None
+    assert with_clock.onset_error_days is not None
+    assert with_clock.onset_error_days >= 0.0
+
+
+def test_a_population_reports_an_unmeasured_metric_as_unmeasured(library):
+    pairs = [(diagnose(r["db_path"]).to_dict(), truth_of(r), name)
+             for name, r in library.items()]
+    score = score_population(pairs, population="clockless")
+    assert score.median_onset_error is None
+    assert "n/a" in score.render()

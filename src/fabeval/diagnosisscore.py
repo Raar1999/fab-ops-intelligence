@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import statistics as st
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 __all__ = ["DiagnosisOutcome", "Score", "score_dataset", "score_population"]
@@ -136,9 +137,36 @@ def _entity_key(entity: Mapping[str, Any]) -> str:
     return f"{entity['kind']}:{entity['name']}"
 
 
+def _onset_day(event: Mapping[str, Any],
+               time_origin: str | None) -> float | None:
+    """Truth's onset in days from the world clock, or nothing.
+
+    Truth records `onset` as an instant. Turning it into the currency a report
+    speaks needs the origin, which lives in the observable plane; without it
+    this returns None and the metric reports itself as unmeasured, because a
+    silent zero would look like a perfect estimate.
+    """
+    if "onset_day" in event and event["onset_day"] is not None:
+        return float(event["onset_day"])
+    onset = event.get("onset")
+    if onset is None or time_origin is None:
+        return None
+    delta = datetime.fromisoformat(onset) - datetime.fromisoformat(time_origin)
+    return delta.total_seconds() / 86400.0
+
+
 def score_dataset(report: Mapping[str, Any], truth: Mapping[str, Any],
-                  scenario: str = "") -> DiagnosisOutcome:
-    """Join one report to one answer key, on `dataset_id`."""
+                  scenario: str = "",
+                  time_origin: str | None = None) -> DiagnosisOutcome:
+    """Join one report to one answer key, on `dataset_id`.
+
+    `time_origin` is the observable `dataset_meta.time_origin`, and it is what
+    makes onset error measurable at all: truth records an onset as a wall-clock
+    instant while a report speaks in days from the start of the window, and
+    neither artifact alone carries the conversion. `fabeval` may read the
+    observable plane, so the caller supplies it; omitted, onset error is
+    reported as unmeasured rather than as zero.
+    """
     if report["dataset_id"] != truth["dataset_id"]:
         raise ValueError(
             f"a report for {report['dataset_id']!r} cannot be scored against "
@@ -153,7 +181,7 @@ def score_dataset(report: Mapping[str, Any], truth: Mapping[str, Any],
         chamber = target.get("chamber")
         planted = (f"chamber:{target['tool']}/{chamber}" if chamber
                    else f"tool:{target['tool']}")
-        onset_day = events[0].get("onset_day")
+        onset_day = _onset_day(events[0], time_origin)
 
     assessed = [c for c in report["candidates"] if c["status"] == "assessed"]
     ranked = [_entity_key(c["entity"]) for c in assessed]
@@ -175,12 +203,13 @@ def score_dataset(report: Mapping[str, Any], truth: Mapping[str, Any],
                            if c["status"] == "not_assessable"))
 
 
-def score_population(pairs: Sequence[tuple[Mapping[str, Any],
-                                           Mapping[str, Any], str]],
-                     population: str,
+def score_population(pairs: Sequence[Sequence[Any]], population: str,
                      notes: Sequence[str] = ()) -> Score:
-    """Score many (report, answer key, scenario) triples as one population."""
+    """Score many (report, answer key, scenario[, time_origin]) rows.
+
+    The fourth element is optional and is the observable `time_origin`; supply
+    it and onset error is measured, omit it and the metric says so.
+    """
     return Score(population=population,
-                 outcomes=tuple(score_dataset(report, truth, scenario)
-                                for report, truth, scenario in pairs),
+                 outcomes=tuple(score_dataset(*row) for row in pairs),
                  notes=tuple(notes))
