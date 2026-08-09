@@ -8,6 +8,14 @@ then renders every chart into reports/figures/.
 
 This is the script form of notebooks/investigation.ipynb. Run with:
     python -m fabops.investigation   (or: fabops-investigate)
+
+**This is the demonstration, not the engine.** Its conclusion is
+`fabops.config.DEMO_SUSPECT_TOOL`, a constant: this script narrates and
+verifies a known answer on the legacy schema v1 database. The answer-blind
+engine that *discovers* a candidate from a schema v2 dataset is
+`fabops.diagnosis.diagnose(db_path)`, reachable as `fabops-diagnose`. Both are
+kept: ADR-010 deletes the demo from no surface until its replacement is
+strictly better on that surface, and on the narrative surface it is not.
 """
 from __future__ import annotations
 

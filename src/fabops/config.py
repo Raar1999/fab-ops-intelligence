@@ -30,11 +30,16 @@ EDGE_ZONE_MIN_RADIUS_MM = 110.0
 
 # --------------------------------------------------------- demonstration RCA
 # ETCH-02 is the KNOWN, PLANTED root cause of the demo dataset (seed=42).
-# The current pipeline NARRATES and VERIFIES this conclusion — it does not
-# discover it. Nothing in the code computes a suspect from data yet; that is
-# the future diagnosis engine (docs/audit/RCA_AUDIT.md §2, ADR-003). This
-# constant exists so the demonstration is honest about being a demonstration,
-# and so the conclusion lives in exactly one place until the engine replaces it.
+# The legacy pipeline NARRATES and VERIFIES this conclusion — it does not
+# discover it. This constant exists so the demonstration is honest about being
+# a demonstration, and so the conclusion lives in exactly one place.
+#
+# The engine that discovers a candidate instead of being told one now exists:
+# `fabops.diagnosis.diagnose(db_path)` (ADR-029), and it may not name an
+# entity — a test asserts that this very constant would trip its rule 3. What
+# keeps the constant here is ADR-010 rather than ADR-003: the legacy demo owns
+# the narrative surface until something is strictly better on it, and the
+# engine reads schema v2 datasets while this narrates the schema v1 database.
 DEMO_SUSPECT_TOOL = "ETCH-02"
 
 # ---------------------------------------------------------------- chart theme

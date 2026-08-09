@@ -17,6 +17,7 @@ it is not given the others.
 from __future__ import annotations
 
 import math
+from types import MappingProxyType
 from typing import Callable, Mapping, Sequence
 
 from fabops.diagnosis.anchors import MIN_SEGMENT_BINS
@@ -137,11 +138,11 @@ def trend_contrast(series: Sequence[float], indices: Sequence[int],
 
 
 #: The registry. A report records which member produced it.
-STATISTICS: Mapping[str, Statistic] = {
+STATISTICS: Mapping[str, Statistic] = MappingProxyType({
     "standardized_step": standardized_step,
     "own_scale_step": own_scale_step,
     "trend_contrast": trend_contrast,
-}
+})
 
 #: The declared default. Chosen on **fault-free calibration**, never on fault
 #: performance - which is the only selection criterion available to an engine

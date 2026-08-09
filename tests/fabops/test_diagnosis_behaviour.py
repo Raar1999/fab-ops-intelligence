@@ -198,3 +198,49 @@ def test_the_default_statistic_is_the_calibrated_one():
     from fabops.diagnosis.statistics import DEFAULT_STATISTIC
 
     assert DEFAULT_STATISTIC == "own_scale_step"
+
+
+# ------------------------------------------------------------- the surface
+
+
+def test_the_registries_cannot_be_mutated_at_runtime():
+    """A module-level dict is a global somebody can edit from anywhere.
+
+    Both registries are read-only mappings, so a caller cannot swap a
+    statistic or re-point an evidence family and have every later
+    investigation quietly change underneath it.
+    """
+    from fabops.diagnosis.channels import _PREFIX_FAMILY
+    from fabops.diagnosis.statistics import STATISTICS
+
+    with pytest.raises(TypeError):
+        STATISTICS["own_scale_step"] = None
+    with pytest.raises(TypeError):
+        _PREFIX_FAMILY["met"] = "something else"
+
+
+def test_the_command_line_prints_the_artifact_and_nothing_else(
+        null_dataset, capsys):
+    """`fabops-diagnose` is a wrapper: one argument in, one artifact out."""
+    from fabops.diagnosis.cli import main
+
+    assert main([str(null_dataset["db_path"]), "--indent", "0"]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["schema"] == "fabops.investigation/v1"
+    assert payload["dataset_id"] == null_dataset["dataset_id"]
+    # the human line goes to stderr so stdout stays a clean artifact
+    assert "insufficient evidence" in captured.err
+
+
+def test_the_command_line_refuses_to_be_given_anything_but_a_database(
+        null_dataset):
+    """No flag may carry information about the answer."""
+    import inspect
+
+    from fabops.diagnosis import cli
+
+    source = inspect.getsource(cli)
+    for forbidden in ("truth", "scenario", "expect", "planted", "mechanism"):
+        assert f'"--{forbidden}' not in source
+        assert f"'--{forbidden}" not in source

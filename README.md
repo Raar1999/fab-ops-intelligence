@@ -58,6 +58,14 @@ python -m fabops.build_db          # or: fabops-build
 
 # 3. run the full investigation (prints the story + regenerates all charts)
 python -m fabops.investigation     # or: fabops-investigate
+```
+
+This is the **demonstration**: it narrates a known, planted conclusion on the
+legacy database. The answer-blind engine, which is handed a schema v2 dataset
+and told nothing, is separate:
+
+```bash
+fabops-diagnose path/to/fab.db     # prints a fabops.investigation/v1 report
 
 # 4. launch the interactive dashboard
 streamlit run app/ops_dashboard.py

@@ -28,6 +28,12 @@ dev = ["pytest>=7.0"]
 [project.scripts]
 fabops-build = "fabops.build_db:main"
 fabops-investigate = "fabops.investigation:main"
+# The engine. `fabops-investigate` above is the LEGACY narrated demo, whose
+# conclusion is a constant in `fabops.config` (ADR-003 grandfathers it,
+# ADR-010 keeps it until its replacement is strictly better on that surface).
+# They are separately named so that typing the obvious command cannot hand
+# somebody the hard-coded story and let them believe they ran the engine.
+fabops-diagnose = "fabops.diagnosis.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

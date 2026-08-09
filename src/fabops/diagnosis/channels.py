@@ -33,6 +33,7 @@ import statistics as st
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 from typing import Iterable, Mapping, Sequence
 
 __all__ = [
@@ -60,8 +61,9 @@ EDGE_RADIUS_FRACTION = 0.80
 #: inside one family not.
 FAMILIES = ("metrology", "fdc", "defects", "yield", "alarms")
 
-_PREFIX_FAMILY = {"met": "metrology", "fdc": "fdc", "def": "defects",
-                  "yld": "yield", "alm": "alarms"}
+_PREFIX_FAMILY = MappingProxyType(
+    {"met": "metrology", "fdc": "fdc", "def": "defects",
+     "yld": "yield", "alm": "alarms"})
 
 
 def family_of(channel: str) -> str:
