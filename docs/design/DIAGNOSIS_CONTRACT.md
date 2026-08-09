@@ -168,9 +168,15 @@ number does:
   *method*, and the numbers above are what that method reports.
 * **One channel is not enough even though one channel is not nothing.** At
   p ≈ 0.06 per channel, an engine that ranks seven chambers on edge CD alone
-  will name the wrong one often. Yield in particular carries *no* severity
-  information at these magnitudes (p ≈ 0.41 at every rung) and must not be
-  weighted as though it did.
+  will name the wrong one often. **Yield in particular is not an attribution
+  channel in this scenario** and must not be weighted as though it were: it
+  carries no severity information (p ≈ 0.41 at every rung), the planted
+  chamber ranks 1st, 1st and 6th of 7 across the demo's three seeds, and on
+  twelve fault-free worlds each etch tool is "worst on cohort yield" about a
+  third of the time. ADR-028 removed it from A9's gate for exactly that
+  reason. It remains a real downstream consequence and a real observable —
+  an engine may legitimately *report* it as corroboration — but an engine
+  that ranks candidates on it will rank noise.
 * **The multi-channel, temporal conclusion stands and is better supported.**
   Rule F11 still puts benign offsets in the subtle band, a benign chamber and
   a subtle fault still differ "only by shape in time", and combining evidence

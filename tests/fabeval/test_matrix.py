@@ -161,7 +161,7 @@ def test_the_criteria_the_library_settles_are_green(report, criterion):
 
 
 @pytest.mark.parametrize("criterion",
-                         ["A1", "A3", "A5", "A6", "A7", "A8", "A11"])
+                         ["A1", "A3", "A5", "A6", "A7", "A8", "A9", "A11"])
 def test_the_partly_testable_criteria_are_reported_as_partial(report,
                                                               criterion):
     """Not PASS, and not BLOCKED either. Each of these has a half this gate
@@ -197,36 +197,47 @@ def test_a7_reports_the_null_calibration_it_now_measures(report):
         calibration[0]
 
 
-def test_a9_is_blocked_on_the_item_that_is_actually_unmet(report):
+def test_a9_is_partial_and_can_never_be_pass_while_a_human_item_is_unrun(
+        report):
     """A9 is *statistical equivalence*, never a replay of the legacy numbers
     (ADR-010).
 
-    Until ADR-027 it blocked on the 4-10 point cohort band — a number traced
-    to the audited v1's direct label term and measured unreachable through the
-    only channel that could carry it. The band is now reported as historical
-    reference and the criterion blocks on what is genuinely unmet: the
-    affected tool is not the worst etch tool on cohort yield, which is a
-    ranking failure the between-tool benign spread explains.
+    Two items stopped gating, both for the same kind of reason. ADR-027
+    retired the 4-10 point band, a number traced to the audited v1's direct
+    label term. ADR-028 retired the cohort-yield *ranking*: on twelve
+    fault-free worlds each etch tool is 'worst on cohort yield' about a third
+    of the time, so it is satisfied by chance on a world with no fault in it.
+
+    What remains gating is the declared causal chain reaching the die plane,
+    the edge-ring signature, and maintenance inside the window. A9 is PARTIAL
+    and **cannot be PASS**, because the wafer-map review is a human item.
     """
     verdict = report.verdict("A9")
-    assert verdict.status == BLOCKED
-    assert "worst etch tool" in verdict.detail
-    assert "ranking failure" in verdict.detail
+    assert verdict.status == PARTIAL
+    assert verdict.status != PASS
+    assert "wafer-map review is manual" in verdict.detail
     assert any("wafer-map" in line for line in verdict.evidence)
-    # The retired band is reported, not deleted.
+    # Both retired items are still reported, neither is deleted.
     assert any("historical reference" in line for line in verdict.evidence)
+    assert any("worst etch tool" in line for line in verdict.evidence)
+    assert any("reported, not gating" in line for line in verdict.evidence)
 
 
-def test_only_a9_is_blocked_and_it_is_a_measurement(report):
-    """A7 left this list in ADR-027 and A9 did not.
+def test_nothing_is_blocked_and_nothing_became_pass_by_relaxation(report):
+    """The matrix's shape after three gates of criterion repair.
 
-    A7 is no longer blocked because its check stopped measuring an order
-    statistic; A9 still is, because the yield channel genuinely cannot rank
-    the affected tool and no document has yet decided whether demo continuity
-    should keep a yield item at all. Pinning the list keeps the matrix from
-    drifting green quietly — a criterion may only leave it by being earned.
+    A7 left the blocked list in ADR-027 when its check stopped measuring an
+    order statistic; A9 leaves it in ADR-028 for the same class of reason.
+    Neither became PASS — and that is the property worth pinning, because a
+    criterion may only reach PASS by being earned. Six criteria remain PARTIAL
+    on genuinely unrun work: CI jobs, manual reviews, and checks inapplicable
+    to a null.
     """
-    assert report.blocked == ("A9",)
+    assert report.blocked == ()
+    passing = {v.criterion for v in report.verdicts if v.status == PASS}
+    assert passing == {"A2", "A4", "A10"}, passing
+    partial = {v.criterion for v in report.verdicts if v.status == PARTIAL}
+    assert partial == {"A1", "A3", "A5", "A6", "A7", "A8", "A9", "A11"}, partial
 
 
 # ------------------------------------------------------- scenario behaviour
@@ -431,61 +442,74 @@ def test_a10_notices_an_invalid_truth_file(built):
     assert verdict.status == BLOCKED and "invalid truth" in verdict.detail
 
 
-def test_a9_would_notice_a_demo_whose_yield_story_held(built):
-    """The A9 check is not hard-wired to fail.
+def test_a9_blocks_if_the_chain_stops_reaching_the_die_plane(built):
+    """A9's downstream gate, and the mutation that must break it.
 
-    It reports BLOCKED today because the affected tool is not the worst etch
-    tool on cohort yield, not because the function cannot report anything
-    else. Feeding it a yield table where the affected chamber really does lose
-    six points makes its tool the worst and moves the verdict — which is what
-    makes today's BLOCKED a measurement rather than a stub.
+    ADR-028 replaced the cohort-yield ranking with a statement about the
+    *declared* chain: truth's `causal_chain` is derived from the world's own
+    sensitivity maps, so requiring it to reach `die_bins` and `wafer_yield`
+    fails loudly if a future change severs the die plane from the story, while
+    saying nothing about the size of the last stage. The magnitude question
+    lives in `tests/fabsim/test_die.py`, by counterfactual subtraction, which
+    is the only instrument that can see an 0.058-point effect.
 
-    Never PASS: the manual wafer-map item is unrun and no arithmetic can run
-    it. And the retired band is still *reported* in the evidence at both
-    verdicts, so retiring it cannot be mistaken for deleting it.
+    This is what makes today's PARTIAL a measurement rather than a stub.
     """
     demo = primary(built, DEMO_SCENARIO)
-    verdict = check_a9(demo)
-    assert verdict.status == BLOCKED
-    assert any("historical reference" in line for line in verdict.evidence)
+    assert check_a9(demo).status == PARTIAL
 
+    severed = copy.deepcopy(demo.truth)
+    severed["events"][0]["causal_chain"] = [
+        link for link in severed["events"][0]["causal_chain"]
+        if "die_bins" not in link and "wafer_yield" not in link]
+    verdict = check_a9(replace(demo, truth=severed))
+    assert verdict.status == BLOCKED
+    assert "no longer reaches" in verdict.detail
+    assert "die_bins" in verdict.detail and "wafer_yield" in verdict.detail
+
+
+def test_a9_blocks_if_the_demo_loses_its_edge_ring_story(built):
+    """The other gating half: the signature the demo is *about*."""
+    demo = primary(built, DEMO_SCENARIO)
     from fabeval import acceptance
     from fabeval.queries import ChamberScore
 
-    real = acceptance.chamber_yield_split
+    real = acceptance.chamber_edge_defect_share
     label = "ETCH-02/B"
 
-    def shifted(db_path, operation="ETCH"):
-        scores = real(db_path, operation)
-        return {k: (ChamberScore(k, -6.0, v.support) if k == label else v)
+    def flattened(db_path, layer="GATE", operation="ETCH"):
+        scores = real(db_path, layer, operation)
+        return {k: (ChamberScore(k, 0.0, v.support) if k == label else v)
                 for k, v in scores.items()}
 
-    acceptance.chamber_yield_split = shifted
+    acceptance.chamber_edge_defect_share = flattened
     try:
-        moved = check_a9(demo)
+        verdict = check_a9(demo)
     finally:
-        acceptance.chamber_yield_split = real
-    assert moved.status == PARTIAL
-    assert "wafer-map" in " ".join(moved.evidence)
-    assert any("historical reference" in line for line in moved.evidence)
+        acceptance.chamber_edge_defect_share = real
+    assert verdict.status == BLOCKED
+    assert "does not tell its story" in verdict.detail
 
 
-def test_a9_still_reports_the_retired_band_and_never_enforces_it(built):
-    """The band is retired as binding and preserved as a reference (ADR-027).
+def test_a9_reports_both_retired_yield_items_and_enforces_neither(built):
+    """The band (ADR-027) and the ranking (ADR-028), preserved not deleted.
 
-    Both halves are pinned: the number is still in the evidence with its
-    range, and a deficit outside it no longer decides the verdict. A future
-    edit that quietly deletes the number, or one that quietly starts gating on
-    it again, breaks this.
+    Both are pinned in both directions: each number is still in the evidence,
+    and neither decides the verdict. A future edit that quietly deletes one,
+    or one that quietly starts gating on it again, breaks this.
     """
     from fabeval.acceptance import LEGACY_COHORT_BAND
 
     assert LEGACY_COHORT_BAND == (4.0, 10.0)
     verdict = check_a9(primary(built, DEMO_SCENARIO))
-    band_lines = [line for line in verdict.evidence if "4.0-10.0" in line]
-    assert band_lines, verdict.evidence
-    assert "not enforced" in band_lines[0]
-    # The measured deficit is far outside the band, and that is not why the
-    # criterion blocks.
+
+    band = [line for line in verdict.evidence if "4.0-10.0" in line]
+    assert band and "not" in band[0] and "enforced" in band[0], verdict.evidence
+    ranking = [line for line in verdict.evidence if "worst etch tool" in line]
+    assert ranking and "not gating" in ranking[0], verdict.evidence
+
+    # Neither retired item decides the verdict: the demo's affected tool is
+    # *not* the worst on cohort yield at this seed, and A9 is PARTIAL anyway.
+    assert verdict.status == PARTIAL
     assert "4-10" not in verdict.detail
-    assert "ranking failure" in verdict.detail
+    assert "worst etch tool" not in verdict.detail

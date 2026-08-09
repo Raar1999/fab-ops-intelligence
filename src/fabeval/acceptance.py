@@ -38,9 +38,11 @@ from fabeval.queries import (
 from fabeval.truthschema import TruthValidationError, validate_truth
 
 __all__ = [
-    "PASS",
-    "PARTIAL",
     "BLOCKED",
+    "DEMO_CHAIN_ENDPOINTS",
+    "LEGACY_COHORT_BAND",
+    "PARTIAL",
+    "PASS",
     "Verdict",
     "arc_ordering",
     "check_a1", "check_a2", "check_a3", "check_a4", "check_a5",
@@ -572,23 +574,47 @@ def check_a8(datasets: Sequence[Any]) -> Verdict:
 LEGACY_COHORT_BAND = (4.0, 10.0)
 
 
+#: The stages the demo's *declared* causal chain must still reach.
+#:
+#: This is what replaced the cohort-yield ranking item as A9's gate on the
+#: downstream half (ADR-028). It is deliberately a statement about the chain
+#: being *declared complete*, not about the size of its last stage: truth's
+#: `causal_chain` is derived from the world's own sensitivity maps, so it
+#: cannot disagree with the physics, and it fails loudly if a future change
+#: severs the die plane from the story. The *magnitude* question lives where
+#: it can actually be measured — counterfactual subtraction in
+#: `tests/fabsim/test_die.py`, which is the only instrument that can see an
+#: 0.058-point effect.
+DEMO_CHAIN_ENDPOINTS = ("die_bins", "wafer_yield")
+
+
 def check_a9(demo: Any) -> Verdict:
     """Demo continuity — the qualitative checklist, scored honestly.
 
     A9 is *statistical equivalence*, never a replay of the legacy numbers
-    (ADR-010). The checklist has five items; four are machine-checkable and
-    the fifth is a manual wafer-map review. A criterion with an unrun manual
-    item is not PASS, whatever the other four say.
+    (ADR-010). It ends in a manual wafer-map review, so a criterion with that
+    item unrun is not PASS, whatever the machine-checkable ones say.
 
-    **What ADR-027 changed.** The cohort-yield *magnitude* no longer blocks:
-    `LEGACY_COHORT_BAND` is reported as historical context, not enforced,
-    because it is unreachable through the only channel that could carry it and
-    because it is the magnitude of the direct label term the architecture
-    exists to remove. What still blocks is the item that is genuinely unmet —
-    the affected chamber's tool is *not* the worst etch tool on cohort yield,
-    which is a statement about ranking rather than about magnitude and which
-    no document has retired. Both are reported, so retiring the band cannot be
-    mistaken for retiring the criterion.
+    **What ADR-027 changed.** The cohort-yield *magnitude* stopped blocking:
+    `LEGACY_COHORT_BAND` is reported as historical context because it is the
+    magnitude of the direct label term the architecture exists to remove.
+
+    **What ADR-028 changed.** The cohort-yield *ranking* stopped blocking too,
+    and for a reason of the same kind. Measured over twelve fault-free worlds,
+    the worst etch tool on cohort yield is ETCH-01 four times, ETCH-02 four
+    times and ETCH-03 four times — so "the affected chamber's tool is worst on
+    cohort yield" is satisfied by chance **one time in three on a world with no
+    fault in it**. A criterion a null world passes a third of the time is not
+    an attribution criterion. Fixing the grain does not rescue it: at chamber
+    grain the planted chamber ranks 1st, 1st and **6th of 7** across the demo's
+    three seeds, and its standing does not move with severity (z = +1.16 /
+    +1.25 / +1.26 across the ladder, p ≈ 0.34 at every rung).
+
+    Yield is therefore **reported and never gating** here. It remains in the
+    simulator, the schema, the queries and truth's `expected_impact`; what it
+    is not is the channel this criterion attributes through. What gates the
+    downstream half instead is `DEMO_CHAIN_ENDPOINTS` — the declared chain must
+    still reach the die plane and wafer yield.
     """
     truth = demo.truth
     if not truth["events"]:
@@ -615,40 +641,58 @@ def check_a9(demo: Any) -> Verdict:
     # 3. unscheduled maintenance on the affected tool inside the window.
     repaired = event["maintenance_response"] is not None
 
+    # 4. the declared causal chain still reaches the die plane and yield.
+    #    Derived from the world's own sensitivity maps by the truth emitter,
+    #    so it cannot disagree with the physics it describes (ADR-023 §6).
+    chain = tuple(event.get("causal_chain") or ())
+    missing = [stage for stage in DEMO_CHAIN_ENDPOINTS
+               if not any(stage in link for link in chain)]
+
     low, high = LEGACY_COHORT_BAND
     in_band = low <= deficit <= high
     spread = max(tool_deficit.values()) - min(tool_deficit.values())
     evidence = [
-        f"worst etch tool on cohort yield: {worst_tool} "
-        f"({tool_deficit[worst_tool]:+.2f} pts); affected tool is {tool}",
-        f"between-tool spread on cohort yield: {spread:.2f} pts, against a "
-        f"mechanism-attributable effect of 0.058 pts (ADR-025) - the "
-        f"ranking is benign-variation dominated",
-        f"affected chamber deficit {deficit:+.2f} pts; the legacy band "
-        f"{low}-{high} is reported as historical reference and is not "
-        f"enforced (ADR-027)",
+        f"declared causal chain: {list(chain)}",
         f"edge-ring share rank of {label}: {edge_rank}/{len(shares)}",
         f"unscheduled maintenance in the window: {repaired}",
         "wafer-map review: not run (manual item)",
+        "-- reported, not gating (ADR-027, ADR-028) --",
+        f"affected cohort within-product yield delta {-deficit:+.2f} pts; the "
+        f"legacy band {low}-{high} is historical reference and is not "
+        f"enforced",
+        f"worst etch tool on cohort yield: {worst_tool} "
+        f"({tool_deficit[worst_tool]:+.2f} pts); affected tool is {tool}"
+        f" - not gating: on twelve fault-free worlds each etch tool is worst "
+        f"about a third of the time",
+        f"between-tool spread on cohort yield: {spread:.2f} pts, against a "
+        f"mechanism-attributable effect of 0.058 pts (ADR-025) - the ranking "
+        f"is benign-variation dominated",
     ]
-    met = [worst_tool == tool, edge_rank == 1, repaired]
-    if worst_tool != tool:
+    met = [not missing, edge_rank == 1, repaired]
+    if missing:
         return Verdict(
             "A9", BLOCKED,
-            f"the affected tool {tool} is not the worst etch tool on cohort "
-            f"yield ({worst_tool} is, at {tool_deficit[worst_tool]:+.2f} pts "
-            f"against {tool_deficit.get(tool, float('nan')):+.2f}). This is a "
-            "ranking failure, not a magnitude one: the between-tool benign "
-            f"spread is {spread:.2f} pts and the mechanism contributes 0.058, "
-            "so which tool ranks worst on yield is decided by benign "
-            "variation. Whether demo continuity should keep a yield item at "
-            "all is the open decision ADR-027 records. The manual wafer-map "
-            "item is also unrun.", tuple(evidence))
+            f"the demo's declared causal chain no longer reaches {missing}; "
+            f"it is {list(chain)}. The chain is derived from the world's own "
+            "sensitivity maps, so this means the die plane has been severed "
+            "from the story rather than that the effect is small.",
+            tuple(evidence))
+    if edge_rank != 1 or not repaired:
+        return Verdict(
+            "A9", BLOCKED,
+            f"the demo does not tell its story: edge-ring share rank "
+            f"{edge_rank} (want 1), unscheduled maintenance in the window "
+            f"{repaired} (want True)", tuple(evidence))
     return Verdict("A9", PARTIAL,
-                   f"{sum(met)}/3 machine-checkable items met "
-                   f"(legacy band {'met' if in_band else 'not met'}, "
-                   "reported only); the wafer-map review is manual and has "
-                   "not been run", tuple(evidence))
+                   f"{sum(met)}/3 machine-checkable items met - the declared "
+                   "chain reaches the die plane and yield, the affected "
+                   "chamber leads on edge-ring share, and the fault window "
+                   "carries unscheduled maintenance. Cohort yield is reported "
+                   "and not gating (ADR-028): it is satisfied by a fault-free "
+                   f"world a third of the time. Legacy band "
+                   f"{'met' if in_band else 'not met'}, reported only. The "
+                   "wafer-map review is manual and has not been run, so this "
+                   "criterion cannot be PASS.", tuple(evidence))
 
 
 # ------------------------------------------------------------------- A10

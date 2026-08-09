@@ -8,7 +8,9 @@
 
 `src/fabeval/` scores A1-A11 over the five-scenario library and reports one of three verdicts. `PARTIAL` is used deliberately and often: several criteria have a half this gate settles and a half that needs CI or a manual review, and calling those PASS would make the matrix a worse instrument than no matrix. Since the A9/A6 review gate, A6's severity sweep runs (`fabeval.build_sweep`) and its PARTIAL is a measurement rather than an unbuilt check. Run with `fabeval.build_library` + `fabeval.evaluate`; `fabeval.render` prints the table below.
 
-**Three of these rows were about the criteria rather than about the simulator (ADR-026), and ADR-027 settles two of them.** A6's floor and A7's L7 both thresholded a maximum over chambers against a number that means one chamber's standing; both now read against a *derived null reference distribution* (`src/fabeval/reference.py`) at a declared level, which converges and which no world constant can move. A9's numeric band is retired as binding and preserved as a historical reference. **Nothing was made green by relaxation**: A6 stays PARTIAL, A9 stays BLOCKED for a truer reason, A7 becomes PARTIAL because its check stopped measuring an order statistic, and no criterion became PASS.
+**Three of these rows were about the criteria rather than about the simulator, and ADR-026/027/028 settle all three.** A6's floor and A7's L7 both thresholded a maximum over chambers against a number that means one chamber's standing; both now read against a *derived null reference distribution* (`src/fabeval/reference.py`) at a declared level, which converges and which no world constant can move. A9's numeric band is retired as binding, and its cohort-yield *ranking* is retired as a gate — measured to be satisfied by a fault-free world one time in three. Each retired item is still reported; none is deleted.
+
+**Nothing was made green by relaxation, and nothing became PASS.** A6 stays PARTIAL; A7 and A9 became PARTIAL because their checks stopped measuring things a correct simulator fails. The matrix now has no blocked criterion — a statement about the criteria having been repaired, not about the simulator having improved. Every PARTIAL names genuinely unrun work: a CI reference-image job (A1), manual reviews (A9), checks inapplicable to a null (A7), and halves delegated to other criteria (A3, A8, A11).
 
 | | Status | What is outstanding |
 |---|---|---|
@@ -20,7 +22,7 @@
 | A6 | PARTIAL | the difficulty axis exists at both ends - realized severity rises and subtle stays inside benign variation - but at moderate the planted chamber clears the declared level on none of the three channels A6 names as evidence (p = 0.076 / 0.105 / 0.338); it clears on alarms, which corroborates (ADR-027) |
 | A7 | PARTIAL | L1-L11 green where applicable, including both halves of L7; 18 checks are inapplicable to their dataset, which is why this is not PASS |
 | A8 | PARTIAL | chamber usage and etch independence hold; recipe and benign-offset items belong to A4 and 3C |
-| A9 | **BLOCKED** | the affected tool is not the worst etch tool on cohort yield (ETCH-03 is), a *ranking* failure the between-tool benign spread explains; the 4-10 band is retired as binding and reported as historical reference; the wafer-map review is manual and unrun (ADR-027) |
+| A9 | PARTIAL | the declared chain reaches the die plane, the edge-ring signature leads and the fault window carries maintenance; cohort yield is reported and not gating (a fault-free world is "worst on yield" one time in three - ADR-028) and the 4-10 band is historical reference (ADR-027); the wafer-map review is manual and unrun, so A9 **cannot be PASS** |
 | A10 | **PASS** | - |
 | A11 | PARTIAL | the legacy artifacts are present and still schema v1; the 27-test behavioural half is the test suite's |
 
@@ -202,12 +204,30 @@ The classification is therefore **(D) an acceptance-interpretation issue compoun
 
 **The open decision, stated so the next gate can take it.** Whether demo continuity should keep a yield item at all is *not* settled here, because both answers have consequences no evaluator change can contain: dropping the item changes what the project's flagship demo claims, and making the item reachable means recalibrating the composition ADR-026 §1 identified — ADR-018 §4's deliberately un-amplified observation transfer against ADR-021 §5's 3.0-tolerance functional limit — which moves every dataset and needs its own gate. The band was retired because its provenance settles it; the item is not, because its provenance does not.
 
+*As decided (the final A9 gate), **cohort yield is retained as reported evidence and removed as an attribution gate**, and A9 becomes **PARTIAL**.* **ADR-028**; the measurement that settles it, and the three things it does not license.
+
+**The measurement.** On **twelve fault-free worlds** the worst etch tool on cohort yield is ETCH-01 four times, ETCH-02 four times and ETCH-03 four times — an exact three-way split. *The item is satisfied by chance one time in three on a world with no fault in it.* A criterion a null world passes a third of the time is not an attribution criterion; it is the third and last of the criteria these gates found whose reference distribution had never been computed.
+
+**The grain is not the fix**, which was the obvious first hypothesis: A9 asks a *tool*-grain question about a *chamber*-grain fault. At chamber grain the planted chamber ranks 1st, 1st and **6th of 7** across the demo's three seeds — at seed 2024 nearly the best-yielding chamber in the fab — and its standing does not move with severity (z = +1.16 / +1.25 / +1.26, p ≈ 0.34 at every rung). On fault-free worlds ETCH-02/B itself ranks 2nd of 7 on five of twelve.
+
+**Why this is faithful rather than a relaxation.** `RCA_AUDIT` found v1's "three independent signals" were "three readouts of one boolean", and yield is the variable `−0.08 if bad_tool` wrote into — so requiring yield to *rank* the tool is requiring the mechanism by which v1 gave its answer away, which is the same argument that retired the band applied to the ranking. A9's own last bullet already forbids it ("recoverable **only** through mediated channels"), and yield is the last stage of a chain the design gives "independent noise at every stage", so it is the most attenuated channel by construction.
+
+**What it does not license.** *(i)* Nothing is removed from the simulator, the schema, the queries or the truth artifact — `chamber_yield_split` is still computed, still reported here, and still one of A6's three declared evidence channels and one of L7's three reference channels. *(ii)* "Yield is weak in this scenario" is **not** "yield should never be used diagnostically" — a later scenario built around a defect- or parametric-dominated mechanism may well make it primary. *(iii)* Whether the world's composition should be recalibrated so yield carries more signal is untouched and remains a separate physics gate.
+
+**What gates the downstream half instead.** The demo's *declared* `causal_chain` must still reach `die_bins` and `wafer_yield` (`fabeval.acceptance.DEMO_CHAIN_ENDPOINTS`). That chain is derived from the world's own sensitivity maps, so it cannot disagree with the physics, and severing the die plane fails A9 loudly. The *magnitude* stays gated where it can actually be measured — counterfactual subtraction in `tests/fabsim/test_die.py`, which asserts the mechanism reached die at all, reached only exposed wafers, and rises monotonically with severity by at least 1.2× — because that is the only instrument that can see an 0.058-point effect.
+
 `demo_edge_uniformity` (scenario B, default seed) reproduces a **statistically equivalent** ETCH-02 story, defined as this checklist — not exact numbers:
-- the affected chamber's tool is worst of the three etch tools on cohort yield **(binding, and currently unmet — ETCH-03 ranks worst; see the finding above)**; ~~deficit in 4–10 pts~~ *(**retired as binding by ADR-027 §6 and preserved as a historical reference.** It is the magnitude of the audited `−0.08 if bad_tool` term: the v1 deficit it was read from was 8.0 points of direct label effect and ~3.7 points mediated, so the band's own floor sits above what the legacy system produced through physics. The parametric channel that would have to carry it in FabSim disposes of 0.80 yield points in total on a healthy fab. `fabeval.acceptance.LEGACY_COHORT_BAND` keeps the number and the check reports it; nothing gates on it)*;
+
+*Gating:*
+- the declared causal chain still reaches the die plane and wafer yield *(ADR-028; the successor to the yield item)*;
 - elevated edge-ring share and edge-zone defect concentration on the affected chamber's wafers;
 - unscheduled maintenance present on the affected tool within the fault window;
-- wafer maps visibly show the edge-ring signature (manual review of regenerated figures);
+- wafer maps visibly show the edge-ring signature (manual review of regenerated figures) — **unrun, so A9 cannot be PASS**;
 - the story is recoverable **only** through mediated channels (A7 holds on this dataset).
+
+*Reported, never gating:*
+- ~~the affected chamber's tool is worst of the three etch tools on cohort yield~~ *(**retired as a gate by ADR-028** — satisfied by a fault-free world one time in three. The tool standing, the cohort delta and the between-tool spread are printed in the evidence at every verdict)*;
+- ~~deficit in 4–10 pts~~ *(**retired as binding by ADR-027 §6 and preserved as a historical reference.** It is the magnitude of the audited `−0.08 if bad_tool` term: the v1 deficit it was read from was 8.0 points of direct label effect and ~3.7 points mediated, so the band's own floor sits above what the legacy system produced through physics. `fabeval.acceptance.LEGACY_COHORT_BAND` keeps the number and the check reports it; nothing gates on it)*.
 
 ### A10 — Benchmark separation
 L9 code-plane lint green; fabops/app/notebooks contain no fabsim import and no truth/scenario path references; truth files valid against `fabsim.truth/v1`; dataset directories contain observable artifacts + `truth/` only, with manifests free of scenario names.

@@ -523,3 +523,52 @@ Two decisions inside that table. **A6's evidence channels are the three its own 
 **8. What changed, and what did not.** Changed: `src/fabeval/reference.py` (new), `sweep.summarize`, `leakage.l7_null_blindness` + `l7_null_calibration`, `acceptance.check_a6`/`check_a7`/`check_a9`, `matrix.evaluate`, their tests, and the design documents these findings touch. **Unchanged: `src/fabsim/`, `src/fabops/`, `app/`, `data/`, `sql/`, `scenarios/`, every world constant, and the legacy v1 surfaces.** One verdict moved, on measurement: **A7 BLOCKED → PARTIAL**, because its check stopped measuring an order statistic. **A6 stays PARTIAL** and **A9 stays BLOCKED** — A9 on a different and truer item, which is a strengthening rather than a relaxation: it used to block on something provably unreachable, and now blocks on something a better-composed model could actually satisfy. **Nothing became PASS.**
 
 **9. Diagnosis is still not authorized**, and the blocker is now precise. ADR-026 corrected `DIAGNOSIS_CONTRACT.md` §5's measurement; this gate gives §8's open decision 2 — the abstention threshold, which "must be calibrated against the null worlds, never against the faulted ones" — the instrument it lacked, since `reference.py` is exactly that calibration and is engine-independent. Four of the five open decisions remain (the score's definition, the onset statistic, the artifact's schema name, and where the package lives), and A9's yield-item question is open. Diagnosis waits on those, not on the benchmark.
+
+## ADR-028 — Cohort yield is a downstream consequence in the demo-continuity gate, not an attribution channel
+
+**Status: Accepted (2026-08-09), from the final A9 architecture decision gate.** ADR-027 retired A9's 4–10 point band and left one question open: *should the flagship demo-continuity criterion contain a cohort-yield item at all?* This gate answers it. **No `src/fabsim/` change; no world constant; the yield plane, the die grid, `die_bins`, `wafer_yield`, the yield queries and truth's `expected_impact` are all untouched.** What changes is what A9 *attributes through*.
+
+**1. The decision.** Cohort yield is **retained in A9 as reported, corroborating evidence and removed as a gating attribution criterion.** The checklist item "the affected chamber's tool is worst of the three etch tools on cohort yield" no longer gates; the number, the tool standing and the between-tool spread are printed in the evidence at every verdict. What gates the downstream half instead is that the demo's *declared* causal chain still reaches the die plane and wafer yield.
+
+**2. Why — the measurement that settles it.** On **twelve fault-free worlds**, the worst etch tool on cohort yield is:
+
+```
+ETCH-01   4 / 12        ETCH-02   4 / 12        ETCH-03   4 / 12
+```
+
+Exactly a three-way split. **A9's item is therefore satisfied by chance one time in three on a world with no fault in it.** A criterion a null world passes a third of the time is not an attribution criterion — it is the same class of defect ADR-026 found in L7, seen from the other side. The previous two gates each found a criterion whose reference distribution had never been computed; this is the third and last of them.
+
+**3. The grain is not the fix, and this is worth stating because it was the obvious first hypothesis.** A9 asks a *tool*-grain question about a *chamber*-grain fault, and averaging a faulted chamber's deficit with its healthy siblings' dilutes it — so one might expect chamber grain to rescue the item. It does not. Scenario B's planted chamber on chamber-grain cohort yield:
+
+```
+seed   42    rank 1 / 7   z +1.25    seed 2024   rank 6 / 7   z -0.65
+seed  101    rank 1 / 7   z +2.58
+subtle rank 2 / 7  z +1.16      moderate rank 1 / 7  z +1.25      obvious rank 2 / 7  z +1.26
+```
+
+At seed 2024 the planted chamber is the *sixth worst of seven* — nearly the best-yielding chamber in the fab. And the standing does not move with severity: p ≈ 0.34 against the per-chamber null reference at every rung of the ladder. On fault-free worlds ETCH-02/B itself ranks 2nd of 7 on five of twelve. The channel carries no attribution information at either grain, at any severity.
+
+**4. Why this is faithful to A9 rather than a relaxation of it.** Four independent arguments, none of which depends on the effect currently being small:
+
+  * **It is the audited defect's shape.** `RCA_AUDIT` found v1's "three independent signals" were "three readouts of one boolean", and yield is the variable `−0.08 if bad_tool` wrote into. Requiring yield to *rank* the tool is requiring the mechanism by which v1 gave its answer away — the same argument that retired the band, applied to the ranking instead of the magnitude.
+  * **A9's own last bullet already forbids it**: "the story is recoverable **only** through mediated channels". A mediated yield signal is by construction the most attenuated one in the chain.
+  * **It inverts the design's own information ordering.** `FABSIM_DESIGN.md` §2.2 requires "independent noise at every stage". Yield is the last stage, so it carries the least signal per unit of latent departure. Requiring the noisiest channel to carry attribution is backwards.
+  * **The tool grain is itself a legacy artifact.** v1 had no chambers; the audit's own remedy was that "chambers become real". A tool-grain yield requirement asks the successor to reproduce a limitation of its predecessor.
+
+**5. What replaces it, and why nothing is lost.** The concern a reviewer should raise is that dropping the item hides a future regression in which the chain stops reaching yield. It does not, because that property is gated where it can actually be measured — by **counterfactual subtraction in the simulator's own suite**, which is the only instrument that can see an 0.058-point effect:
+
+  * `test_a_mechanism_reaches_a_die_only_through_what_the_fab_observed` runs the same timeline twice, with and without the mechanism, and asserts `moved, "the mechanism reached no die at all"` **and** that every moved die belongs to an exposed wafer.
+  * `test_a_larger_edge_departure_raises_the_edge_risk_it_produced` asserts the outer-fifth parametric risk is monotone across `None → moderate → obvious` with `risks[-1] > 1.2 * risks[0]`.
+  * L3's mediation test continues to bound any *direct* yield effect at ≤ 2 points (measured +0.57 on B).
+
+  At the benchmark level A9 gains one cheap tripwire in place of the ranking: `DEMO_CHAIN_ENDPOINTS` requires the demo's declared `causal_chain` to reach `die_bins` and `wafer_yield`. That chain is *derived* from the world's own sensitivity maps (ADR-023 §6), so it cannot disagree with the physics, and severing the die plane from the story fails A9 loudly while saying nothing about the size of the last stage.
+
+**6. The alternatives, weighed.** *Keep and gate at chamber grain* — rejected by §3: rank 6 of 7 at one of three seeds. *Keep and gate on an exposed-versus-unexposed observable contrast* — rejected because the contrast has the **wrong sign**: the exposed cohort out-yields its within-product peers by +0.43 pts, benign character dominating a 0.058-point mechanism. *Keep and gate on a counterfactual-derived mediated delta* — rejected as duplicating L3 and as requiring the hidden plane for a criterion whose whole subject is what an analyst can see. *Recalibrate the physics until yield attributes* — out of scope here and forbidden by the anti-tuning rules; it remains a legitimate future gate (§7).
+
+**7. What is deliberately not decided.** Whether the *world's* composition should be recalibrated so that yield becomes diagnostically informative — ADR-018 §4's deliberately un-amplified observation transfer against ADR-021 §5's 3.0-tolerance functional limit — is untouched. That is a physics question with fab-wide consequences, and this ADR takes no position on it beyond noting that it is separable: "yield is weak in this scenario" and "yield should never be used diagnostically" are different claims, and only the first is established. A later scenario designed around a defect-dominated or parametric-dominated mechanism may well make yield a primary channel, and nothing here forecloses that.
+
+**8. Consequences, checked rather than assumed.** `A9` moves **BLOCKED → PARTIAL**, and **cannot become PASS**: the wafer-map review is a human item and no arithmetic can run it. No other criterion changes. Nothing is removed from the observable schema, from FabSim, from the queries or from the truth artifact; `chamber_yield_split` is still computed, still reported by A9, and still one of A6's three declared evidence channels and one of L7's three reference channels — where it is measured against a converging reference rather than asked to rank. The anti-leakage suite is untouched. The benchmark now has **no blocked criterion**, which is a statement about the criteria having been repaired, not about the simulator having improved: three PASS, eight PARTIAL, and every PARTIAL naming genuinely unrun work — CI jobs, manual reviews, and checks inapplicable to a null.
+
+**9. One thing noticed and deliberately not acted on, recorded so it is not rediscovered.** A9's *remaining* gating signature item — "elevated edge-ring share on the affected chamber's wafers", scored as rank 1 — is seed-fragile in exactly the way ADR-024 §5 already documents for L11: the planted chamber ranks **1st at seed 42, 3rd at 101 and 6th at 2024**, because `edge_uniformity` is signed and the defect channel reads its magnitude. A9 is scored on the demo at its *published default seed*, which is the criterion's own declared scope, so the item holds where A9 asks it. But a future gate that scores A9 across seeds will find a failure ADR-024 has already explained, and the honest fix then is the one `fabeval.fixtures` already applied — mark the channel corroborating and require the metrology channel instead. That is a change to a different item than this ADR's, in a session scoped to one question, so it is left alone.
+
+**10. Diagnosis.** A9's resolution determines none of `DIAGNOSIS_CONTRACT.md` §8's four remaining open decisions (the score's definition, the onset statistic, the artifact's schema name, the engine's location). Diagnosis is now blocked **only** on those. One thing it does settle for the engine's designer: yield is not the channel to rank chambers on in this scenario, and the contract's §5 warning against single-channel scoring now has a third measured example behind it.
