@@ -18,6 +18,8 @@ Four checks, in order of authority:
 
 `manifest.json` is identical across runs except `created_at` — the only wall-clock value in the pipeline, excluded from every hash.
 
+*As implemented (the emission gate), checks 1–3 are met and tested.* The five inputs canonicalize to one `build_fingerprint`, and moving any one of them — seed, config, world — moves it while leaving the others alone. Two builds of one dataset produce the identical `content_sha256` (tables in name order, rows in primary-key order, values type-tagged), byte-identical `fab_database.sql`, byte-identical `truth/truth.json`, and manifests differing in `created_at` and nothing else — verified field by field rather than by comparing the whole object. Emission is also checked across processes under a changed hash seed, locale and timezone. Check 4, the reference-image `fab.db` byte compare, waits for CI.
+
 This does not weaken the requirement. Byte identity was only ever a proxy for "the same data"; the content hash tests that property directly, on every value in every row, and unlike a byte compare it names the table and row that diverged when it fails. What is dropped is the claim that a *binary storage format* is identical across environments FabSim does not control — a claim the design never needed and could not have kept.
 
 ### A2 — Diversity
@@ -38,6 +40,8 @@ The null dataset passes the full integrity suite; leakage tests L7 (null blindne
 
 ### A4 — Structural integrity (generator self-tests, every build)
 All invariants of `SCHEMA_V2_DESIGN.md` §4 and `TEMPORAL_MODEL.md` §6: FK closure, run/step time ordering, zero runs during DOWN/PM, inspection/metrology/test time ordering, reconciliation (defect counts, die-bin sums, state-ribbon tiling), vocabulary closure.
+
+*As implemented (the emission gate), this criterion is **met** and runs on every build.* `src/fabsim/selftest.py` is stage 7 of the pipeline and raises rather than shipping. FK closure is enforced by the database itself — foreign keys are declared and `PRAGMA foreign_key_check` runs before the file is handed over — and the half SQLite cannot express is checked here: a run's chamber belongs to its tool and its recipe matches its step and its wafer's product; runs are ordered and non-overlapping per wafer and none lies inside a DOWN/PM window; metrology, inspections and test follow what they observe and lot finish follows the last activity; defect counts, die-bin sums and state ribbons reconcile; and every categorical value comes from the world's own vocabulary. Verified by mutation across all four families. The checker is given the emitted rows and the world, never the realization — a check that consulted the thing that produced the dataset would be confirming it against its own author.
 
 ### A5 — Temporal validity
 For each fault scenario: truth `onset` lies strictly inside the horizon with ≥ 30% baseline period before it; affected-cohort series (metrology → defects → yield) depart baseline in causal order; scenario I additionally shows repair time < recovery, with residual ≈ configured (1 − recovery_fraction).
@@ -83,6 +87,8 @@ The interpretation is unchanged and is worth restating, because "the signature i
 ### A10 — Benchmark separation
 L9 code-plane lint green; fabops/app/notebooks contain no fabsim import and no truth/scenario path references; truth files valid against `fabsim.truth/v1`; dataset directories contain observable artifacts + `truth/` only, with manifests free of scenario names.
 
+*As implemented (the emission gate), the artifact half is in place.* A dataset directory holds `fab.db`, `fab_database.sql`, `manifest.json` and `truth/` — nothing else — and the manifest is free of scenario names, mechanisms, severities and fault fields, checked by token scan over everything but the `row_counts` block (whose keys are schema table names and are checked by shape). `truth.json` self-identifies as `fabsim.truth/v1`. The directory name is the opaque `dataset_id`. What remains is the truth-schema *validator* and CI wiring.
+
 *As implemented (Step 3A):* the code-plane lint runs in both directions and over subpackages — `src/fabsim/**` imports no `fabops`, and `src/fabops/**` and `app/**` import no `fabsim` and mention no `scenarios/`, `truth/` or `truth.json`. The hidden `Realization` is in-memory only: no path, no registry, no singleton, so an observable projection can only be handed it. No truth file and no dataset directory exists yet.
 
 ### A11 — Backward compatibility
@@ -90,11 +96,11 @@ The legacy surfaces are untouched: `data/generate_fab_db.py` byte-identical, leg
 
 ## B. Phase 1 deliverables checklist
 
-- [ ] `src/fabsim/` package per `FABSIM_DESIGN.md` §3, stdlib-only, with `fabsim-build` entry point
+- [~] `src/fabsim/` package per `FABSIM_DESIGN.md` §3, stdlib-only — done; the `fabsim-build` console entry point is not wired (`fabsim.emit.build_dataset` is the function it would call)
 - [ ] `scenarios/worlds/baseline_fab_v1.*` + five scenario configs (A, B, C, G, I per `SCENARIO_SPECIFICATION.md` §4)
-- [ ] Schema v2 DDL + emit path (SQLite + portable dump + manifest)
-- [ ] Truth emitter (`fabsim.truth/v1`) + schema validator
-- [ ] Generator self-test suite (A4) wired into every build
+- [x] Schema v2 DDL + emit path (SQLite + portable dump + manifest) — `src/fabsim/emit/`
+- [x] Truth emitter (`fabsim.truth/v1`) — `src/fabsim/emit/truth.py`; the schema *validator* remains open
+- [x] Generator self-test suite (A4) wired into every build — `src/fabsim/selftest.py`
 - [ ] Anti-leakage suite L1–L11 + reference-query fixtures in `eval/`
 - [ ] Five library datasets generated deterministically in CI
 - [x] pytest coverage: rng substreams, routing, mechanism math, kill model, invariants — *the generation planes; the emit/benchmark surfaces below remain open*

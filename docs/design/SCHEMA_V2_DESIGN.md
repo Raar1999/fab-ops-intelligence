@@ -1,6 +1,6 @@
 # Schema v2 Design — Observable Operational Data Model
 
-**Status:** Phase 1 design for review. No DDL is implemented.
+**Status:** Phase 1 design, **implemented**. The DDL and the projection live in `src/fabsim/emit/observable.py`; the §4 invariants are checked on every build by `src/fabsim/selftest.py` (ADR-023).
 **Derivation:** DATA_MODEL_AUDIT §3 Tier 1–2 (chambers, recipes, tool events, clock consistency, structured parameters, die-grid yield, classification/geometry separation, metrology), RCA_AUDIT §1.4 (identifiability failures), SYNTHETIC_DATA_AUDIT §3.1.
 
 Everything in this schema is **observable** — data a real fab's MES / FDC / defect-inspection / test systems would record. Nothing in it encodes fault identity, scenario configuration, or ground truth (`ANTI_LEAKAGE_DESIGN.md` governs; truth lives outside the DB per `GROUND_TRUTH_CONTRACT.md`).
@@ -138,6 +138,14 @@ As v1: `inspection_id, wafer_id, flow_step_id, inspection_tool_id, inspection_ti
 | Holds/dispositions, excursion records | Tier 3; these are *platform outputs* (Phase 4+), not generator outputs |
 | Shift calendar, consumables/parts | Tier 3; deferred until a scenario needs them |
 | Queues/carriers/AMHS, multi-fab | Rejected (ADR-012) |
+
+## 3.1 As implemented (the emission gate)
+
+All 22 tables are emitted, in the column order §2 states, with foreign keys **declared and enforced** — `PRAGMA foreign_keys = ON` at write time and `PRAGMA foreign_key_check` before the file is handed over, so §4.1's "every FK resolves" is the database's job rather than a check that hopes. Three orders are kept separate and each is stated where it is used: §2's numbering for this document, dependency order for writing the database *and* the dump, and plain table-name order for the content digest.
+
+**One stated deviation.** `lots.priority` (§2.11) is **not emitted**. In v1 it was a `random.choice` over HOT/STANDARD/LOW — causally inert, like the operator dimension — and the FabSim timeline models no lot priority, because releases are a cadence and scheduling is availability-driven (`TEMPORAL_MODEL.md` §2). Nothing realized exists for the column to hold, and drawing one inside the emitter would put entropy in a serializer. It belongs to a timeline slice if a scenario ever needs the dimension; until then the column is absent rather than invented (ADR-023 §5).
+
+**One field templated as the contract requires.** `maintenance.description` is `"<maint_type> <action_code>"` — identical for every window sharing those two coded values, so the free-text column carries exactly what the codes carry and can leak nothing. A test asserts the one-to-one property rather than the string.
 
 ## 4. Integrity invariants (generated data must satisfy; `selftest.py` asserts)
 

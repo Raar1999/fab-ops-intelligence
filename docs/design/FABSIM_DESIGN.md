@@ -92,11 +92,12 @@ src/fabsim/
 │   ├── defects.py         # Poisson counts, spatial components, classifier channel
 │   ├── yieldmodel.py      # die grid, kill probabilities, bins, wafer yield
 │   └── maintenance.py     # PM schedule, breakdown hazard, repair/recovery
-├── emit/
+├── emit/                  #                                        [implemented]
 │   ├── observable.py      # schema v2 SQLite + portable .sql dump
 │   ├── truth.py           # truth artifact (fabsim.truth/v1)
 │   └── manifest.py        # manifest.json (provenance, hashes)
 └── selftest.py            # post-generation invariant + anti-leakage checks
+                           #                                        [implemented]
 ```
 
 Module count is deliberately small; `mechanisms/` is the only place designed for growth.

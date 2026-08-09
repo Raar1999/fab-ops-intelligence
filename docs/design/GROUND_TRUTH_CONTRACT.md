@@ -89,6 +89,17 @@ Field intent:
 
 The split is structural rather than conventional: a later emitter handed `alarms` and `maintenance` has nothing to serialize that would leak, because the fields do not exist on those records. `events[].maintenance_response` in the schema above is assembled from `repairs`, on the hidden side of the boundary.
 
+### 3.2 As implemented (the emission gate)
+
+`truth.json` is written by `src/fabsim/emit/truth.py`, from the realization and never from the configuration. Every field of §3 is emitted, plus `world_sha256` and a `hidden_counts` block that states the *sizes* of the hidden records so a reader can tell the plane exists without the plane being copied into the file. Two notes:
+
+- **Realized, not configured.** `severity` stays the configured label; `severity_realized.aggregate_shift_sigma` is what the latent plane produced (measured 4.35σ for a configured `obvious` on the reference build). `alarms_emitted` is filtered on the hidden `kind == "condition"`, which only this side can see; `maintenance_response.recovery_fraction` is the realized `LatentReset`; `affected_runs` / `affected_wafers` are the runs that really happened, with `exposure` measured as the share of a wafer's runs that were on an affected chamber while the activation was live. `expected_impact` is computed from the kill model's output **within product**, because products differ by up to ten yield points and a raw cohort mean would mostly measure the product mix. `causal_chain` is *derived* from the world's declared latent → channel and latent → origin sensitivities, so it cannot disagree with the physics it describes.
+- **`affected_wafers[].expected_mechanism_share` is not emitted.** The §3 sketch shows a qualitative bucket ("high"/"low") that nothing in the realization computes; the measured `exposure` beside it carries the same information as a number. Recorded in ADR-023 §5 rather than filled with a guess.
+
+The distractor list leads with `benign_offset_baseline` — the standing offsets rule F11 puts on every chamber of every world, declared by nobody and the ones a diagnosis engine is most likely to accuse — followed by any declared distractor mechanism with the chambers it actually widened, and any routing condition. Listing only the declared ones would make false-attribution scoring look complete while missing the common case.
+
+Enforcement of §4 is wired: `fabops` and `app` are scanned for `fabsim` imports and for the strings `scenarios/`, `truth/` and `truth.json`; the analytical entry points (`fabops.db.connect` / `run_query` / `run_view`) are asserted to take a **database path** and never a dataset directory, so reaching the hidden plane requires deliberate circumvention rather than an accident.
+
 ## 4. Access rules (the separation that must hold)
 
 | Actor | fab.db / dump / manifest | scenarios/*.json | truth/truth.json |

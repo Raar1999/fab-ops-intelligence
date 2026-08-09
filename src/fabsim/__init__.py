@@ -45,9 +45,14 @@ and the stage the physics will later play on:
                     miss at its own radius — one Bernoulli each, a tester bin
                     drawn as a symptom, and a wafer yield that is the count of
                     survivors and nothing else
+* `fabsim.emit`     the two planes as files: schema v2 SQLite and a portable
+                    dump, `truth/truth.json` per `fabsim.truth/v1`, and a
+                    manifest carrying the five reproducibility inputs, their
+                    fingerprint and the content hashes
+* `fabsim.selftest` the §4 generation invariants, run on every build — a
+                    dataset that violates one fails rather than shipping
 
-The observable emitters and the truth artifact are later slices. Nothing in
-this package reads or writes a dataset yet.
+The scenario library, the benchmark and the diagnosis engine are later gates.
 
 `fabsim.latent` is the only slice that reads a scenario's `events`: everything
 downstream reads *latent state*, so a fault's effect on a measurement is
@@ -90,7 +95,14 @@ __all__ = ["SCHEMA_VERSION", "__version__"]
 #: world contract. It also carries the ADR-020 recovery correction, which
 #: moved every 3A–3D realization and shipped against 0.5.0 without a bump of
 #: its own; 0.6.0 is where that change becomes visible in the fingerprint.
-__version__ = "0.6.0"
+#: 0.7.0 — the emission layer. Generation is byte-for-byte unchanged from
+#: 0.6.0, but a dataset's `fabsim_version` has to identify the code that
+#: *wrote* it as well as the code that realized it: the manifest, the content
+#: hash, the `.sql` dump and `truth.json` are all products of `fabsim.emit`,
+#: and two trees claiming one version while emitting differently would be
+#: ADR-022's defect in a new place. The reference build now digests the
+#: emitted observable plane too, so the tripwire covers both halves.
+__version__ = "0.7.0"
 
 #: Observable schema version, recorded in `dataset_meta` and the manifest.
 #: The schema v2 DDL is a later Phase 1 slice; the constant exists now because

@@ -40,6 +40,7 @@ import pytest
 from fabsim import SCHEMA_VERSION, __version__
 from fabsim.defects import inspect_response
 from fabsim.die import probe_response
+from fabsim.emit.observable import project
 from fabsim.observation import observe_response
 from fabsim.response import respond_scenario
 from fabsim.scenario import from_mapping
@@ -85,6 +86,7 @@ REFERENCE_EVENT: dict[str, Any] = {
 #: breach this file exists to prevent (ADR-022).
 REFERENCE_BUILDS: dict[str, str] = {
     "0.6.0": "36265211073d2365b9801dee85d597d0e4e8f6f41a0bb16d993abbcf29f2ae68",
+    "0.7.0": "451752e8a3175224a0d26c7c3bdc6da3248fa62d03c0d8ac7886fe23cd3aa334",
 }
 
 
@@ -108,12 +110,21 @@ def _digest() -> str:
         defects = inspect_response(response)
         die = probe_response(response, observations, defects)
         identity = config.dataset_identity(world_sha256=world.world_sha256)
+        # The emitted plane too, since 0.7.0: a version identifies the code
+        # that wrote a dataset as well as the code that realized it, and the
+        # projection is where the first can change while the second does not.
+        emitted = project(
+            response.timeline, observations, defects, die, response.alarms,
+            dataset_id=identity.dataset_id,
+            fabsim_version=identity.fabsim_version,
+            schema_version=identity.schema_version)
         for part in (identity.build_fingerprint,
                      response.realization.content_sha256(),
                      response.content_sha256(),
                      observations.content_sha256(),
                      defects.content_sha256(),
-                     die.content_sha256()):
+                     die.content_sha256(),
+                     emitted.content_sha256()):
             digest.update(part.encode("ascii"))
             digest.update(b"\n")
     return digest.hexdigest()
@@ -145,7 +156,7 @@ def test_the_generator_produces_what_its_version_claims():
 
 def test_the_recorded_history_is_not_quietly_dropped():
     """Old entries stay. They are the record of which generator was which."""
-    assert set(REFERENCE_BUILDS) >= {"0.6.0"}
+    assert set(REFERENCE_BUILDS) >= {"0.6.0", "0.7.0"}
     assert "0.5.0" not in REFERENCE_BUILDS      # named two generators; ADR-022
     for version, digest in REFERENCE_BUILDS.items():
         assert len(version.split(".")) == 3, version
