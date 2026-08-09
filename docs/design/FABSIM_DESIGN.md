@@ -139,11 +139,11 @@ Implemented in `rng.py`: `stream(master_seed, *key)` returns a fresh `random.Ran
 
 ## 7. Versioning
 
-- **Generator version**: `fabsim.__version__`, semver. Any change that can alter emitted bytes for a fixed (config, seed) bumps at least the minor version. Recorded in manifest and truth.
+- **Generator version**: `fabsim.__version__`, semver. Any change that can alter emitted bytes for a fixed (config, seed) bumps at least the minor version. Recorded in manifest and truth. **Enforced, not trusted** (ADR-022): `tests/fabsim/test_generation_identity.py` binds each version to the digest of a fixed reference build across every plane, so generation cannot move without the table that names the version moving with it. The rule was broken once before that existed — `188bf43` and `02aed8d` both claimed 0.5.0 and produced different content under one build fingerprint — and `0.5.0` is absent from the table as the record of it.
 - **Schema version**: `2.0` for the Phase 1 observable schema; recorded in the DB's `dataset_meta` table and the manifest. Additive changes bump the minor; breaking changes bump the major.
 - **Truth schema version**: `fabsim.truth/v1`, versioned independently (`GROUND_TRUTH_CONTRACT.md` §5).
 - **Scenario config version**: `fabsim.scenario/v1` header field (spelled `"fabsim": "scenario/v1"` in the file), validated on load; any other value is rejected. Additive optional fields with empty defaults stay at v1 while no config has been emitted (ADR-015 §4); once configs and datasets exist, any change that could alter an existing config's meaning or identity requires v2.
-- **World template version**: `fabsim.world/v1` header field, plus a content digest `world_sha256` recorded alongside it. The version says which contract the file speaks; the digest says which *world* it is, and both the manifest and the build fingerprint carry it.
+- **World template version**: `fabsim.world/v1` header field, plus a content digest `world_sha256` recorded alongside it. The version says which contract the file speaks; the digest says which *world* it is, and both the manifest and the build fingerprint carry it. Every non-documentation top-level key of the template participates in the digest, checked structurally rather than field by field, so a block a future slice adds cannot be declared and loaded but left out of the identity it belongs to.
 
 The benchmark can therefore state precisely: *result R came from scenario X (config hash), world W (world hash), seed Z, fabsim vY, schema 2.0* — the reproducibility requirement of the gate.
 

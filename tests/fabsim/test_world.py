@@ -1578,6 +1578,19 @@ def test_the_same_world_hashes_the_same_way(template):
         base_rate=0.0003), id="defect-intensity"),
     pytest.param(lambda raw: raw["products"][0].update(defect_scale=1.4),
                  id="product-defectivity"),
+    pytest.param(lambda raw: raw["products"][0].update(
+        killer_density_per_mm2=0.005), id="product-killer-density"),
+    pytest.param(lambda raw: raw["die_kill"]["parametric"].update(
+        kill_limit_tolerances=2.5), id="parametric-kill-limit"),
+    pytest.param(lambda raw: raw["die_kill"]["background"].update(
+        wafer_log_sigma=0.2), id="background-defectivity"),
+    pytest.param(lambda raw: raw["die_kill"]["defect"]["layer_weights"].update(
+        METAL=0.7), id="defect-layer-lethality"),
+    pytest.param(lambda raw: raw["die_kill"]["tester"]["confusion"].update(
+        defect={"OPEN_SHORT": 0.6, "PARAM": 0.2, "LEAK": 0.1, "OTHER": 0.1}),
+        id="tester-confusion"),
+    pytest.param(lambda raw: raw["die_grid"].update(street_width_mm=0.1),
+                 id="die-geometry"),
 ])
 def test_a_semantic_change_changes_the_world_hash(template, mutate):
     """Anything that can move emitted data must move the identity with it."""
@@ -1586,6 +1599,26 @@ def test_a_semantic_change_changes_the_world_hash(template, mutate):
     changed = copy.deepcopy(template)
     mutate(changed)
     assert world_sha256(changed) != world_sha256(template)
+
+
+def test_every_semantic_block_participates_in_the_world_hash(template):
+    """Structural, so a block added by a future slice cannot be left out.
+
+    The parametrized cases above name a field inside each block; this names
+    none of them. Dropping any non-documentation top-level key must move the
+    digest — which is the property that would have caught `die_kill` being
+    declared, loaded and then omitted from the identity it belongs to.
+    """
+    import copy
+
+    from fabsim.world import WORLD_DOCUMENTATION_KEYS
+
+    semantic = [key for key in template if key not in WORLD_DOCUMENTATION_KEYS]
+    assert len(semantic) > 15
+    for key in semantic:
+        reduced = copy.deepcopy(template)
+        del reduced[key]
+        assert world_sha256(reduced) != world_sha256(template), key
 
 
 def test_prose_is_not_part_of_the_world_identity(template):

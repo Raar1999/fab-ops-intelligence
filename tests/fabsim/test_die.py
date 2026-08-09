@@ -48,7 +48,13 @@ from fabsim.die import (
 from fabsim.observation import Metrology, ProcessObservations, observe, observe_response
 from fabsim.response import respond_scenario
 from fabsim.scenario import from_mapping
-from fabsim.world import TEST_OPERATION, build_world
+from fabsim.world import (
+    DIE_INDEX_ORDERS,
+    DIE_ORIGINS,
+    PARTIAL_DIE_POLICIES,
+    TEST_OPERATION,
+    build_world,
+)
 
 SCENARIO: dict[str, Any] = {
     "fabsim": "scenario/v1",
@@ -247,6 +253,32 @@ def test_the_partial_die_policy_decides_the_grid(world):
     assert not _admits("exclude", COVERAGE_OUTSIDE)
     with pytest.raises(ValueError, match="unknown partial die policy"):
         _admits("keep_everything", COVERAGE_PARTIAL)
+
+
+def test_every_declared_grid_convention_is_dispatched_not_assumed(world):
+    """`origin` and `index_order` must be *read*, like `partial_die_policy`.
+
+    All three are closed, versioned vocabularies with one member today, and a
+    convention the engine merely happens to agree with is not implemented — it
+    is a coincidence that a second declared value would silently break. Each
+    is looked up and each refuses a value outside its vocabulary, so the
+    contract has exactly one place to answer for a future member.
+    """
+    from dataclasses import replace as _replace
+
+    from fabsim.die import _cell_centre, _cell_index
+
+    policy = world.die_grid
+    assert policy.origin in DIE_ORIGINS
+    assert policy.index_order in DIE_INDEX_ORDERS
+    assert _cell_centre(policy, 1, 1, 3, 3, 2.0, 2.0) == (0.0, 0.0)
+    assert _cell_index(policy, 2, 1, 5, 5) == 7
+
+    with pytest.raises(ValueError, match="unknown die grid origin"):
+        _cell_centre(_replace(policy, origin="wafer_notch"),
+                     0, 0, 3, 3, 2.0, 2.0)
+    with pytest.raises(ValueError, match="unknown die index order"):
+        _cell_index(_replace(policy, index_order="spiral"), 0, 0, 3, 3)
 
 
 def test_a_bigger_die_means_fewer_of_them(world):
@@ -1119,11 +1151,36 @@ def test_the_die_engine_cannot_see_a_mechanism_or_the_hidden_plane():
         "suspect", "suspect_tool", "DEMO_SUSPECT_TOOL", "benchmark",
         "expected_yield", "target_yield_pct", "penalty", "yield_penalty",
         # the hidden defect record, and the latent plane behind it
-        "origins", "origin_of", "origin", "contributing_chamber_id",
+        "origins", "origin_of", "contributing_chamber_id",
         "contributing_flow_step_id", "trajectory", "trajectories", "latent",
         "latent_dynamics", "value_at",
     }
     assert sorted(_identifiers(_module()) & forbidden) == []
+
+
+def test_the_die_engine_reads_only_the_grids_origin_and_never_a_defects():
+    """Two different things are spelled `origin`, and only one is allowed.
+
+    `die_grid.origin` is a *coordinate* convention — where (0, 0) sits on the
+    wafer — and the engine must read it, or the declared vocabulary is a
+    convention it merely happens to agree with. `DefectOrigin.origin` is the
+    hidden physical cause of a defect and must never be reached. A bare-name
+    scan cannot tell them apart, so this one resolves the expression the
+    attribute is taken from: every `.origin` access in the module must be on
+    the die-grid policy, and nothing else.
+    """
+    def base(node: ast.expr) -> str:
+        while isinstance(node, ast.Attribute):
+            node = node.value
+        return node.id if isinstance(node, ast.Name) else "<expr>"
+
+    tree = ast.parse(_module().read_text(encoding="utf-8"))
+    accesses = [base(node.value) for node in ast.walk(tree)
+                if isinstance(node, ast.Attribute) and node.attr == "origin"]
+    assert accesses, "the coordinate origin is declared but never read"
+    assert set(accesses) == {"policy"}, sorted(set(accesses))
+    # And the hidden record stays out of reach by its own names.
+    assert not ({"origins", "origin_of"} & _identifiers(_module()))
 
 
 def test_the_die_engine_names_no_entity():
@@ -1181,7 +1238,10 @@ def test_the_die_engine_has_no_branch_on_an_entity_or_a_scenario():
     """
     tree = ast.parse(_module().read_text(encoding="utf-8"))
     permitted = {COVERAGE_INSIDE, COVERAGE_OUTSIDE, COVERAGE_PARTIAL,
-                 "exclude", TEST_OPERATION, "accumulation", "ar1"}
+                 "exclude", "wafer_center", "row_major", TEST_OPERATION,
+                 "accumulation", "ar1"}
+    assert permitted >= set(PARTIAL_DIE_POLICIES) | set(DIE_ORIGINS) | set(
+        DIE_INDEX_ORDERS)
     compared: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Compare):

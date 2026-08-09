@@ -272,6 +272,40 @@ def _admits(policy: str, coverage: str) -> bool:
     raise ValueError(f"unknown partial die policy {policy!r}")
 
 
+def _cell_centre(policy: DieGridPolicy, column: int, row: int, columns: int,
+                 rows: int, pitch_x: float, pitch_y: float
+                 ) -> tuple[float, float]:
+    """Where one lattice cell sits, under the declared coordinate origin.
+
+    `DIE_ORIGINS` is a closed, versioned vocabulary with one member today, and
+    it is dispatched here for the same reason `partial_die_policy` is: a
+    declared convention the engine merely *happens* to agree with is not
+    implemented, it is coincidence, and the day a second origin is declared
+    this is the one function that has to answer for it.
+
+    `wafer_center`: (0, 0) is the wafer centre and the lattice is centred on
+    it, so cell centres sit at `(i − (n−1)/2) · pitch` — symmetric under a half
+    turn for an odd and an even count alike, and identical for every product.
+    """
+    if policy.origin == "wafer_center":
+        return ((column - (columns - 1) / 2.0) * pitch_x,
+                ((rows - 1) / 2.0 - row) * pitch_y)
+    raise ValueError(f"unknown die grid origin {policy.origin!r}")
+
+
+def _cell_index(policy: DieGridPolicy, column: int, row: int, columns: int,
+                rows: int) -> int:
+    """The die's index under the declared index order. Dispatched, not assumed.
+
+    `row_major`: `index = row · columns + column`, with rows numbered from the
+    top of the wafer downwards and columns from the left — the way a wafer map
+    is read, and what `die_bins.die_x` / `die_y` record.
+    """
+    if policy.index_order == "row_major":
+        return row * columns + column
+    raise ValueError(f"unknown die index order {policy.index_order!r}")
+
+
 def die_grid(policy: DieGridPolicy, product: Product) -> DieGrid:
     """Lay out one product's die lattice. Deterministic; no seed, no RNG."""
     wafer_radius = product.wafer_size_mm / 2.0
@@ -290,12 +324,13 @@ def die_grid(policy: DieGridPolicy, product: Product) -> DieGrid:
     dies: list[Die] = []
     for row in range(rows):
         for column in range(columns):
-            x_mm = (column - (columns - 1) / 2.0) * pitch_x
-            y_mm = ((rows - 1) / 2.0 - row) * pitch_y
+            x_mm, y_mm = _cell_centre(policy, column, row, columns, rows,
+                                      pitch_x, pitch_y)
             coverage = _coverage(x_mm, y_mm, width / 2.0, height / 2.0,
                                  usable_radius)
             dies.append(Die(
-                index=row * columns + column, column=column, row=row,
+                index=_cell_index(policy, column, row, columns, rows),
+                column=column, row=row,
                 x_mm=x_mm, y_mm=y_mm, width_mm=width, height_mm=height,
                 coverage=coverage,
                 eligible=_admits(policy.partial_die_policy, coverage)))
