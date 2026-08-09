@@ -34,3 +34,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The diagnosis fixtures build their fault-free population in a process pool,
+# and a worker can only unpickle the builder if the `tests` package is
+# importable by name. This also makes `from tests.fabops...` work in-process.
+pythonpath = ["."]

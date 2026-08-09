@@ -14,5 +14,12 @@ dist/
 .vscode/
 .idea/
 
+# Generated FabSim datasets. `fabsim.emit.DATASET_ROOT` defaults here, so a
+# build run without an explicit root would otherwise drop hundreds of megabytes
+# of observable planes - and their hidden `truth/` siblings - into the working
+# tree. They are reproducible from (config, world, seed, version) and belong
+# nowhere near a commit.
+data/scenarios/
+
 # Note: data/fab.db and data/fab_database.sql are intentionally committed so the
 # repo runs immediately on clone (they are also fully regenerable via `make setup`).
