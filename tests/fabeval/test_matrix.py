@@ -2,8 +2,9 @@
 The five-scenario benchmark matrix, end to end.
 
 One expensive fixture builds what the criteria need — the five library
-scenarios at seed 42, three seeds of the equipment fault for A2, and a second
-independent build of the null for A1 — and everything here scores that. It
+scenarios at seed 42, three seeds of the equipment fault for A2, three of the
+null for A6's natural-variation floor, and a second independent build of the
+null for A1 — and everything here scores that. It
 takes a couple of minutes and about a gigabyte of temporary disk, which is
 what a benchmark over a five-dataset library costs; the alternative is a
 matrix that grades something smaller than the library it claims to grade.
@@ -66,7 +67,13 @@ def test_the_matrix_covers_the_library_and_the_seeds_the_criteria_need(built):
 
 def test_every_row_carries_a_complete_provenance_statement(report):
     """A row a result cannot be traced from is a row that proves nothing."""
-    assert len(report.rows) == len(LIBRARY) + len(A2_SEEDS) - 1
+    # Every scenario at the default seed, plus the extra seeds the criteria
+    # ask for: A2's three of the equipment fault, and A6's three of the null
+    # (its natural-variation floor is one draw per seed). Counted off the two
+    # multi-seed scenarios rather than written as a literal, so the assertion
+    # tracks the plan instead of having to be re-derived when it changes.
+    extra = 2 * (len(A2_SEEDS) - 1)
+    assert len(report.rows) == len(LIBRARY) + extra
     for row in report.rows:
         assert row.dataset_id.startswith(row.scenario_id + "-s")
         assert len(row.config_sha256) == 64 and len(row.world_sha256) == 64
@@ -91,11 +98,22 @@ def test_every_dataset_has_a_distinct_identity_and_content(report):
     assert len({row.build_fingerprint for row in report.rows}) == len(report.rows)
 
 
-def test_the_leakage_suite_finds_nothing(report):
+def test_the_leakage_suite_finds_only_the_known_l7_failures(report):
+    """L1-L11 over every row, with the one open finding named.
+
+    Everything passes except L7 on the null at seeds 101 and 2024 (ADR-025 §5,
+    and the dedicated test above). Naming it here rather than asserting an
+    empty list keeps the suite honest in both directions: the known failure
+    does not have to be re-discovered on every run, and anything *else* that
+    starts failing still lands as a failure.
+    """
     failures = [(row.scenario, row.seed, finding.test, finding.detail)
                 for row in report.rows for finding in row.leakage
                 if not finding.passed and not finding.skipped]
-    assert failures == []
+    unexpected = [f for f in failures
+                  if not (f[0] == "null_baseline" and f[2].startswith("L7"))]
+    assert unexpected == []
+    assert {seed for _s, seed, _t, _d in failures} == {101, 2024}, failures
 
 
 def test_the_report_renders_without_a_console_encoding_problem(report):
@@ -141,16 +159,34 @@ def test_the_criteria_the_library_settles_are_green(report, criterion):
         report.verdict(criterion).detail
 
 
-@pytest.mark.parametrize("criterion", ["A1", "A3", "A5", "A6", "A7", "A8",
-                                       "A11"])
+@pytest.mark.parametrize("criterion", ["A1", "A3", "A5", "A6", "A8", "A11"])
 def test_the_partly_testable_criteria_are_reported_as_partial(report,
                                                               criterion):
     """Not PASS, and not BLOCKED either. Each of these has a half this gate
-    genuinely settles and a half that needs CI, a severity sweep or a manual
-    review — and saying PASS would make the matrix a worse instrument."""
+    genuinely settles and a half that needs CI or a manual review — and
+    saying PASS would make the matrix a worse instrument.
+
+    A6 is here on its measured reading: the sweep runs, the difficulty axis
+    exists, and the recovery half does not clear the null floor. A7 left this
+    list when the leakage suite began to be scored at every seed.
+    """
     verdict = report.verdict(criterion)
     assert verdict.status == PARTIAL, f"{criterion}: {verdict.detail}"
     assert verdict.detail
+
+
+def test_a7_is_blocked_by_the_null_it_could_not_see_before(report):
+    """A7 scored one seed and reported green; scoring all of them, it is not.
+
+    The leakage suite already ran on every dataset in the matrix, but the
+    verdict was built from the seed-42 rows alone, so two L7 failures sat in
+    the report's own rows while A7 said "L1-L11 green". That is fixed, and
+    what the fix reveals is a real property of the world, not a checker bug:
+    on a fault-free build the worst chamber reaches 3.29 sigma at seed 101.
+    """
+    verdict = report.verdict("A7")
+    assert verdict.status == BLOCKED
+    assert "L7" in verdict.detail and "null_baseline" in verdict.detail
 
 
 def test_a9_is_blocked_for_the_reason_the_design_records(report):
@@ -164,8 +200,17 @@ def test_a9_is_blocked_for_the_reason_the_design_records(report):
     assert any("wafer-map" in line for line in verdict.evidence)
 
 
-def test_the_only_blocked_criterion_is_a9(report):
-    assert report.blocked == ("A9",)
+def test_exactly_two_criteria_are_blocked_and_both_are_measurements(report):
+    """A7 joined A9 in the A9/A6 review gate, and neither is a stub.
+
+    A9 is blocked on a cohort yield deficit ADR-025 measures as unreachable at
+    any setting of the constant that governs it; A7 on L7 failing at two of
+    three null seeds, which only became visible once the null was built at
+    more than one seed and every row was scored. Pinning the pair keeps the
+    matrix from drifting green quietly — a criterion may only leave this list
+    by being earned.
+    """
+    assert report.blocked == ("A7", "A9")
 
 
 # ------------------------------------------------------- scenario behaviour
@@ -188,9 +233,35 @@ def test_scenario_i_shows_the_whole_arc_in_order(built):
     assert "condition alarm" in detail
 
 
-def test_the_null_stays_below_the_natural_variation_floor(built):
+def test_the_null_stays_below_the_floor_at_the_published_seed(built):
+    """Seed 42 only, which is the seed `scenarios/README.md` publishes and the
+    baseline the mutation test below poisons. It is *not* the general claim —
+    see the next test."""
     finding = l7_null_blindness(primary(built, "null_baseline"))
     assert finding.passed and not finding.skipped, finding.detail
+
+
+def test_l7_fails_on_the_null_at_two_of_three_seeds(built):
+    """The finding, pinned rather than hidden (ADR-025 §5).
+
+    L7 asks that no chamber on a fault-free world stand out beyond the
+    natural-variation floor, and the implementation reads that floor as a
+    fixed 2.5 sigma. Built at one seed the null cleared it; built at three it
+    does not — ETCH-02/A reaches 3.29 sigma on edge-defect share at seed 101
+    and ETCH-03/A reaches 2.84 sigma on edge CD at seed 2024.
+
+    The check was left exactly as it was. Lowering its bar, or going back to
+    sampling the null once, would be manufacturing the green. What is pinned
+    here is the measurement: two failures, both L7, both on the null. A third
+    failure, or one anywhere else, still breaks this test.
+    """
+    failures = [(seed, finding.detail)
+                for (scenario, seed), copies in built.items()
+                if scenario == "null_baseline"
+                for finding in [l7_null_blindness(copies[0])]
+                if not finding.passed and not finding.skipped]
+    assert len(failures) == 2, failures
+    assert {seed for seed, _ in failures} == {101, 2024}, failures
 
 
 # ------------------------------------------------------------- mutations

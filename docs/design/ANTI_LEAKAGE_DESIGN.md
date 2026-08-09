@@ -115,6 +115,18 @@ Two of the eleven were wrong when first written, and both were corrected in the 
 
 Representative numbers: L3's unexplained cohort residual is +0.57 / +1.21 / -0.27 points on B / G / C against a 2-point limit (the audited direct effect was 8); L6's overlap coefficient is 0.79-0.87 against a 0.20 floor; L8's worst pairwise Jaccard across three seeds of B is 0.161 against a 0.9 limit.
 
+**Correction (the A9/A6 review gate): "no failures" was a one-seed result, and L7 does not hold.** The sentence above is true of the library as it was built — the null at a single seed — and it was scored more narrowly still: the A7 verdict was assembled from the seed-42 rows alone, so the suite's own results at other seeds were computed and then not read. Both are fixed. The null is now built at three seeds and every row is scored, and the measurement is:
+
+| null seed | L7 | worst chamber |
+|---|---|---|
+| 42 | pass | below the floor |
+| 101 | **fail** | edge-defect share, ETCH-02/A at **3.29σ** |
+| 2024 | **fail** | edge CD, ETCH-03/A at **2.84σ** |
+
+L7's implementation reads "below the subtle-severity floor" as a fixed 2.5σ, and that constant was never measured. Measuring it makes the finding worse rather than better: a *subtle* fault's planted chamber reaches 1.88σ on edge CD, 2.09σ on edge-defect share and 1.16σ on the yield split, so on two of three fault-free worlds a benign chamber stands out **more than a subtle fault does**. On the criterion's own wording, not merely against the 2.5 stand-in, L7 fails.
+
+**Nothing was changed to make it pass** — not the floor, not the world, not the null's seed count back down to one. `A7` is therefore **BLOCKED** rather than PARTIAL, `test_l7_fails_on_the_null_at_two_of_three_seeds` pins the measurement so it cannot quietly regress in either direction, and the finding is recorded in ADR-025 §5 with the open question it raises: whether the benign chamber-to-chamber spread this world carries by design (F10/F11) is larger than the subtle severity rung was calibrated to sit above. That is the same overlap L6 passes on and the same one A6's sweep ran into, seen a third time; it is a calibration decision, and it needs its own gate.
+
 ## 4. Process rules (human-side leakage)
 
 1. New mechanisms/scenarios must ship with their L-suite expectations before merging.

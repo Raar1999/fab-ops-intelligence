@@ -346,13 +346,22 @@ def check_a5(datasets: Sequence[Any], horizon_days: int = 84) -> Verdict:
 # ------------------------------------------------------------------- A6
 
 
-def check_a6(datasets: Sequence[Any]) -> Verdict:
+def check_a6(datasets: Sequence[Any],
+             sweep: Mapping[str, Any] | None = None,
+             nulls: Sequence[Any] = (),
+             label: str = "ETCH-02/B") -> Verdict:
     """Causal plausibility: does each declared mechanism reach its channel?
 
     Truth says which channels the mechanism *should* reach — `causal_chain`
     is derived from the world's declared sensitivities — and the reference
     queries say what the observable plane shows. This compares the two, which
     is the join `fabeval` exists for.
+
+    `sweep` maps a severity to a dataset of one scenario at that severity, and
+    `nulls` are fault-free worlds the same queries are run over. Supplied, they
+    answer A6's second half — "at subtle severity the same queries sit near
+    the natural-variation floor (difficulty axis exists)" — which cannot be
+    answered from one dataset. Omitted, that half is reported as not run.
     """
     evidence: list[str] = []
     problems: list[str] = []
@@ -370,13 +379,65 @@ def check_a6(datasets: Sequence[Any]) -> Verdict:
             problems.append(f"{name}: expectation not met")
     if problems:
         return Verdict("A6", BLOCKED, "; ".join(problems), tuple(evidence))
-    return Verdict("A6", PARTIAL,
-                   "every scenario's declared evidence is recoverable by the "
-                   "reference queries at its configured severity; the "
-                   "severity *sweep* the criterion also asks for (the same "
-                   "queries at subtle vs moderate vs obvious on one scenario) "
-                   "belongs with the benchmark matrix and is not run here",
-                   tuple(evidence))
+
+    if not sweep or not nulls:
+        return Verdict("A6", PARTIAL,
+                       "every scenario's declared evidence is recoverable by "
+                       "the reference queries at its configured severity; the "
+                       "severity sweep the criterion also asks for was not "
+                       "supplied to this call", tuple(evidence))
+
+    from fabeval.sweep import (
+        MINIMUM_FLOOR_SEEDS,
+        natural_variation_floor,
+        severity_sweep,
+        summarize,
+    )
+
+    if len(nulls) < MINIMUM_FLOOR_SEEDS:
+        return Verdict("A6", PARTIAL,
+                       f"the severity sweep ran but the natural-variation "
+                       f"floor was read from {len(nulls)} null realization(s); "
+                       f"at least {MINIMUM_FLOOR_SEEDS} are needed before "
+                       "'above the floor' means anything", tuple(evidence))
+    readings = severity_sweep(sweep, label)
+    floor = natural_variation_floor(nulls)
+    outcome = summarize(readings, floor)
+    for reading in readings:
+        evidence.append(
+            f"sweep {reading.severity:8s} realized "
+            f"{reading.realized_sigma:5.2f} sigma  " + "  ".join(
+                f"{c}={s:+.2f}(rank {r}/{n})"
+                for c, (s, r, n) in sorted(reading.standing.items())))
+    evidence.append(f"natural-variation floor (worst chamber on a null): "
+                    f"{outcome['floor']}")
+
+    if not outcome["realized_rises_with_severity"]:
+        return Verdict("A6", BLOCKED,
+                       f"realized severity does not rise with the configured "
+                       f"ladder: {outcome['realized']}", tuple(evidence))
+
+    if not outcome["separated_at_moderate"]:
+        # Measured, not assumed. A6 asks that the evidence be *recovered* at
+        # moderate; ranking first is not recovery, because on a null world
+        # some chamber always ranks first and does so at a comparable sigma.
+        return Verdict(
+            "A6", PARTIAL,
+            "the difficulty axis exists - realized severity rises "
+            f"{outcome['realized']} and channel(s) "
+            f"{outcome['monotone_channels'] or 'none'} rise with it - but at "
+            "moderate severity the planted chamber does not exceed the "
+            "natural-variation floor on any single reference channel, so the "
+            "criterion's 'recovers the intended evidence' half is not met by "
+            "a single query. Whether it is recoverable by combining channels "
+            "and controlling for each chamber's own baseline is the diagnosis "
+            "engine's question, not a reference query's", tuple(evidence))
+
+    return Verdict("A6", PASS,
+                   f"evidence recovered at moderate on "
+                   f"{outcome['separated_at_moderate']}, above the null "
+                   f"floor; subtle sits at or below it: "
+                   f"{outcome['subtle_at_or_below_floor']}", tuple(evidence))
 
 
 # ------------------------------------------------------------------- A7

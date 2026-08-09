@@ -260,3 +260,63 @@ Two semantically different generators, **one identity**. That is exactly the fai
   * **The arc check could pass on a coincidence.** It took the first alarm at or after onset from the observable plane, which can pick a background false alarm followed by a pre-existing breakdown and call the pair an arc. It now takes the *causal* references from truth — `alarms_emitted` is filtered on the hidden condition kind, `maintenance_response.maint_id` names the window the escalation earned — and reads their **timestamps out of the observable tables**, so what is asserted is that the dataset an analyst receives really shows the ordering.
 
 *What this gate deliberately did not do.* No diagnosis, no scoring of a diagnostic output, no suspect ranking. The reference queries compute engineering quantities and rank chambers by them; they do not weigh evidence or combine channels. A grader that grew an opinion could not grade the thing that has one, which is the whole reason the benchmark is built before the engine rather than after.
+
+## ADR-025 — A9's target is unreachable and self-contradictory; A6's recovery half fails against a measured floor; diagnosis stops at the design gate
+**Status: Accepted (2026-08-09), from the A9/A6 review gate.** No simulator code was changed. Five measured findings and one decision about what happens next.
+
+**1. Scenario B's chain is intact; the effect is small because two independent calibrations compose badly.** Traced by counterfactual subtraction on an identical timeline — the same wafers, the same die grid, the mechanism removed and nothing else:
+
+```
+latent      +2.51 sigma_ref post-onset departure on the chamber
+process     cd_nm_edge signed d/L  +0.003 -> +0.464 tolerances
+            cd_nm_mid                      -> +0.304   (half, radial_weight 1.0)
+            cd_nm_center           +0.146  -> +0.146   (exactly unchanged)
+defects     +17 on the exposed cohort; edge share +0.0083
+die         outer fifth p_param 0.00657 -> 0.00917;  p_defect +0.00024
+            p_background delta +0.00000000   (no leak into the background)
+yield       exposed -0.058 pts;  every other wafer +0.0000 pts exactly
+```
+
+Every stage is non-zero, correctly signed and correctly localized — the centre zone moves by *exactly* zero, the background risk by *exactly* zero, and the unexposed wafers by *exactly* zero. **There is no implementation defect.** What limits the magnitude is composition: ADR-018 §4 deliberately did not amplify the observation transfer, so a moderate fault is a +0.46-tolerance edge shift; ADR-021 §5 set the functional kill limit at 3.0 control tolerances on the physical argument that a control limit is where a fab intervenes. Both are individually defensible. Together they put the die model 2.5 tolerances into a Gaussian tail, where a 0.46-tolerance push buys 0.0003 of kill probability. Neither ADR checked the composition against A9, because A9's checklist predates the die plane.
+
+**2. A9's 4–10 point band cannot be reached by the one constant that governs it.** Recomputing the parametric kill off the already-emitted metrology under hypothetical functional limits — a measurement, with nothing modified:
+
+| limit (tolerances) | null world parametric loss | scenario B cohort deficit |
+|---|---|---|
+| 3.0 (current) | 0.46% | −0.13 pts |
+| 2.0 | 2.18% | −0.29 pts |
+| 1.5 | 4.45% | +0.52 pts |
+| 1.2 | 6.65% | +1.56 pts |
+| 1.0 | 8.91% | +2.26 pts |
+
+At a limit of 1.0 the *null* world loses 8.9% of its die to parametric kills — an absurd healthy fab — and scenario B still reaches only 2.26 points, short of the 4-point floor. The band is unreachable at any setting, and the reason is not the limit: the null's own edge |d|/L (mean 0.439, p95 1.403) and the exposed cohort's (mean 0.492, max 1.832) overlap almost entirely. Any limit low enough to kill B's edge die kills the null's at nearly the same rate. **Tuning cannot fix this and was not attempted.**
+
+**3. A9 contradicts itself, and the number it pins is the defect the architecture removed.** A9's prose says the criterion is "statistical equivalence and demo continuity, not reproduction of the legacy numerical outputs", and ADR-010 says the same. Its checklist then pins "deficit in 4–10 pts" — and that figure comes from the audited v1, where the yield formula carried `−0.08 if bad_tool` and the audit found "8.0 of ETCH-02's ~12 yield points are a direct label effect". Requiring FabSim to reproduce 4–10 points is requiring it to reproduce the magnitude of the term ADR-004 exists to abolish. The mediated remainder of the legacy cohort gap was roughly 4 points — the very bottom of the band — and FabSim produces 0.058 points of *mechanism-attributable* effect.
+
+  A9 therefore stays **BLOCKED**, and it is recorded here as an acceptance-document contradiction requiring a decision rather than an engineering fix. Three options exist and none of them is this gate's to take: restate the checklist item in mediated terms with a band derived from the current physics; keep the band and accept A9 as permanently unmet on the baseline world; or change the world's severity calibration, which would move every dataset and needs its own gate. **No constant was moved and no penalty was added.**
+
+**4. A6's severity sweep now runs, and its "recovery" half fails against a properly measured floor.** `fabeval.sweep` was added: the reference queries over one scenario at each rung, read against the *natural-variation floor* — the worst standing any chamber reaches on worlds with nothing wrong.
+
+```
+                realized   edge_cd  edge_share    alarms  yield_split
+subtle             1.61      +1.88       +2.09     +2.14        +1.16
+moderate           3.22      +2.65       +2.34     +4.34        +1.25
+obvious            4.00      +3.02       +2.22     +3.97        +1.26
+null floor (3 seeds)         2.84        3.29       5.05         2.26
+```
+
+The difficulty axis exists — realized severity rises 1.61 → 3.22 → 4.00 and edge-CD and yield-split rise with it. But **at moderate the planted chamber does not exceed the floor on any single channel**. Ranking first is not separation: on a null world some chamber always ranks first, and it does so at a comparable sigma. A6 stays **PARTIAL** with that as its measured reason.
+
+  This is the same fact as finding 1, seen from the analyst's end, and it is *by design*: rule F11 puts benign offsets in the subtle-severity band and states that a fault and an offset differ "only by shape in time". The evidence that exists is multi-channel and temporal, which is the diagnosis engine's problem, not a reference query's.
+
+  **A caution recorded because this gate nearly made the mistake.** The first version of the floor was read from a single null world, and it reported A6 as **PASS** — seed 42's floor happens to sit at 2.31 on edge-CD, below the moderate fault's 2.65. Three seeds put it at 2.84 and the PASS evaporates. `natural_variation_floor` now refuses fewer than three realizations rather than returning a number that flatters whatever it is compared against, and a test pins the refusal.
+
+**5. Sampling the null properly broke L7, and A7 drops to BLOCKED.** Building the null at three seeds for finding 4's floor had a consequence the gate did not go looking for: `l7_null_blindness` fails at seeds 101 and 2024 — ETCH-02/A reaches **3.29σ** on edge-defect share, ETCH-03/A reaches **2.84σ** on edge CD — and passes only at seed 42, the one seed the library had ever built. A second one-draw problem sat behind it in the evaluator: `evaluate` assembled A7's verdict from the seed-42 rows alone, so the suite's results at every other seed were computed and then thrown away. A7 could not have reported this even if the datasets had existed. Both are fixed; the fix is to *score more*, and nothing was relaxed.
+
+  Measuring L7's floor instead of accepting its hardcoded 2.5 makes the finding worse, not better. The design words the criterion as "all effect sizes below the subtle-severity floor", and a subtle fault's planted chamber reaches 1.88 / 2.09 / 1.16σ on the three channels. **On two of three fault-free worlds a benign chamber stands out more than a subtle fault does.** So L7 fails on its own wording, not merely against a stand-in constant.
+
+  This is the third sighting of one fact — findings 1 and 4 are the other two — and the open question it raises is now sharp enough to state: the benign chamber-to-chamber spread the world carries by design (F10/F11) may be larger than the subtle rung was calibrated to sit above. That is a world-calibration decision that moves every dataset, and like A9's it belongs to a gate of its own. **The floor was not raised, the world was not retuned, and the null was not put back to one seed** — the last of those would have restored the green by unlearning the measurement. `test_l7_fails_on_the_null_at_two_of_three_seeds` pins it in both directions: a third failure, or a failure anywhere but L7-on-the-null, still breaks the suite.
+
+**6. Diagnosis stops at the design gate, because its contract did not exist.** ADR-003 states the rule, ADR-005 that evaluation gates the claim, ADR-007 that statistics precede ML, ADR-008 names an output artifact — but nothing said what the engine is handed, what it returns, or how a conclusion is scored. `docs/design/DIAGNOSIS_CONTRACT.md` now says: the entry point takes a **path to `fab.db`** and nothing else (a dataset directory would put `truth/` one join away); the output is a ranked set of candidates each carrying falsifiable evidence, a mandatory `considered[]` of rejected hypotheses, and `insufficient_evidence` as a first-class answer; five static checks and one runtime invariance test (rewrite every hidden record, leave `fab.db` byte-identical, the report must not move) are specified. Five open decisions — the score's definition, the abstention threshold, the onset statistic, the artifact's schema name, and where the package lives — are recorded rather than guessed, because guessing them is the architecture-invention this gate forbids.
+
+*What changed in code.* `fabeval` gained `sweep.py` and a sweep-aware `check_a6`; `build_library` now builds the null at three seeds so the floor has more than one draw; `evaluate` scores the leakage suite on every row rather than on seed 42's. Nothing under `src/fabsim/` or `src/fabops/` was touched, no threshold was moved, and no check was relaxed. Two criteria moved, both downward and both on measurement: **A6 stays PARTIAL with a measured reason instead of an unbuilt one, and A7 drops from PARTIAL to BLOCKED.**

@@ -55,6 +55,7 @@ __all__ = [
     "BenchmarkReport",
     "MatrixRow",
     "build_library",
+    "build_sweep",
     "evaluate",
     "render",
 ]
@@ -69,6 +70,12 @@ DEFAULT_SEED = 42
 
 #: A2 asks for three seeds of the equipment-fault scenario by name.
 A2_SEEDS = (42, 101, 2024)
+
+#: A6's severity sweep: the same scenario at each rung of the ladder. Built
+#: by `build_sweep` and passed to `evaluate(..., sweep=...)`, separately from
+#: the library, because it is three more full datasets and the criteria that
+#: do not need it should not pay for them.
+SWEEP_SEVERITIES = ("subtle", "moderate", "obvious")
 
 #: The ADR-010 continuity anchor A9 is assessed on.
 DEMO_SCENARIO = "chamber_edge_uniformity"
@@ -159,6 +166,26 @@ def _row(dataset: Any, scenario: str, seed: int) -> MatrixRow:
                                         expectation_for(scenario))))
 
 
+def build_sweep(root: Path, *, world: Any = None,
+                scenario: str = DEMO_SCENARIO) -> dict[str, Any]:
+    """One scenario at each severity, for A6. Keyed by severity name."""
+    from fabsim.emit import build_dataset
+    from fabsim.scenario import from_mapping, load_scenario
+    from fabsim.world import load_world
+
+    resolved = world if world is not None else load_world("baseline_fab_v1")
+    base = json.loads(
+        load_scenario(SCENARIO_ROOT / f"{scenario}.json").canonical_json)
+    built: dict[str, Any] = {}
+    for severity in SWEEP_SEVERITIES:
+        raw = dict(base)
+        raw["events"] = [dict(base["events"][0], severity=severity)]
+        built[severity] = build_dataset(
+            from_mapping(raw), world=resolved,
+            root=root / f"sweep-{severity}", created_at="benchmark")
+    return built
+
+
 def build_library(root: Path, *, world: Any = None,
                   seeds: Mapping[str, Sequence[int]] | None = None,
                   duplicate: str | None = "null_baseline"
@@ -176,6 +203,13 @@ def build_library(root: Path, *, world: Any = None,
     plan: dict[str, Sequence[int]] = {name: (DEFAULT_SEED,)
                                       for name in LIBRARY}
     plan[DEMO_SCENARIO] = A2_SEEDS
+    # The null is built at the same seeds, because A6's natural-variation
+    # floor is "the worst chamber on a world with nothing wrong" and one
+    # null world is one draw of that. Measured on the baseline: the worst
+    # chamber's edge-CD standing is 2.31 sigma at seed 42 but 2.84 at seed
+    # 2024, and a floor taken from the lucky seed would let a moderate fault
+    # (2.65) look separated when it is not.
+    plan["null_baseline"] = A2_SEEDS
     if seeds:
         plan.update(seeds)
 
@@ -193,9 +227,14 @@ def build_library(root: Path, *, world: Any = None,
     return built
 
 
-def evaluate(built: Mapping[tuple[str, int], Sequence[Any]]
-             ) -> BenchmarkReport:
-    """Score a built library against A1–A11. Reads both planes."""
+def evaluate(built: Mapping[tuple[str, int], Sequence[Any]],
+             sweep: Mapping[str, Any] | None = None) -> BenchmarkReport:
+    """Score a built library against A1–A11. Reads both planes.
+
+    `sweep` is A6's severity ladder (see `build_sweep`). Supplied, A6 also
+    answers its "difficulty axis" half against a floor measured on the null
+    worlds already in `built`; omitted, A6 reports that half as not run.
+    """
     primary = {scenario: copies[0]
                for (scenario, seed), copies in built.items()
                if seed == DEFAULT_SEED}
@@ -215,8 +254,12 @@ def evaluate(built: Mapping[tuple[str, int], Sequence[Any]]
                   for (scenario, seed), copies in built.items()
                   if len(copies) == 2}
 
-    findings = {row.scenario: row.leakage for row in rows
-                if row.seed == DEFAULT_SEED}
+    # Every row, not just seed 42. The suite already runs on every dataset the
+    # matrix builds, and scoring only the default seed let A7 report "L1-L11
+    # green" while the report's own rows carried L7 failures at other seeds —
+    # the same one-draw mistake A6's floor was fixed for. Keyed by scenario
+    # *and* seed because the scenario alone collides across seeds.
+    findings = {f"{row.scenario}@{row.seed}": row.leakage for row in rows}
 
     verdicts = [
         check_a1(duplicates) if duplicates else Verdict(
@@ -226,7 +269,9 @@ def evaluate(built: Mapping[tuple[str, int], Sequence[Any]]
             "A3", BLOCKED, "no null scenario in the matrix"),
         check_a4(library),
         check_a5(faulted),
-        check_a6(library),
+        check_a6(library, sweep=sweep,
+                 nulls=[copies[0] for (scenario, _seed), copies
+                        in built.items() if scenario == "null_baseline"]),
         check_a7(findings, l8_seed_sensitivity(a2_seeds)),
         check_a8(library),
         check_a9(primary[DEMO_SCENARIO]) if DEMO_SCENARIO in primary
