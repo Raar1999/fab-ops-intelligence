@@ -24,6 +24,20 @@ Two properties are load-bearing and neither is an optimization:
 
 This module reads one database. It opens nothing else, derives no path, and
 knows no entity name.
+
+**Every multi-row query here carries a total `ORDER BY`, and that is a
+correctness requirement rather than tidiness.** SQL licenses a database to
+return rows in any order unless the query states one, and every value below is
+reached by accumulating those rows in float: a bin mean, a product mean, a
+per-wafer defect share. Two orders of the same rows therefore give two answers
+differing in their last bits, and the decision plane downstream turns values
+into *ranks*, where a last-bit difference is a tie broken by whichever plan the
+query planner chose. Measured before this was fixed: reversing the row order of
+one dataset moved 383 of the peer-differenced series while leaving the report
+intact — a defect that was real, latent, and would have surfaced as an
+unreproducible rank the first time two candidates sat close together. The order
+is always a primary key, because ordering on a non-unique column leaves the
+ties back where they started.
 """
 from __future__ import annotations
 
@@ -129,7 +143,8 @@ def load_observations(connection: sqlite3.Connection,
             JOIN operators o ON o.operator_id = r.operator_id
             JOIN wafers w ON w.wafer_id = r.wafer_id
             JOIN lots l ON l.lot_id = w.lot_id
-            JOIN products p ON p.product_id = l.product_id"""):
+            JOIN products p ON p.product_id = l.product_id
+            ORDER BY rm.run_meas_id"""):
         out.append(Observation(
             channel=f"fdc:{param}", day=_days(origin, when),
             value=value - reference,
@@ -158,7 +173,8 @@ def load_observations(connection: sqlite3.Connection,
             JOIN lots l ON l.lot_id = w.lot_id
             JOIN products p ON p.product_id = l.product_id
             JOIN recipes rc ON rc.step_id = f.step_id
-                           AND rc.product_id = l.product_id"""):
+                           AND rc.product_id = l.product_id
+            ORDER BY m.metrology_id"""):
         day = _days(origin, when)
         keys = {"chamber": chamber, "tool": tool, "product": product,
                 "recipe": recipe, "step": step, "operator": operator}
@@ -184,7 +200,8 @@ def load_observations(connection: sqlite3.Connection,
     # ---- defects and yield: attributable to the equipment a wafer actually
     #      visited, and to its product; not to one step among many.
     radius = {name: size / 2.0 for name, size in connection.execute(
-        "SELECT product_name, wafer_size_mm FROM products")}
+        "SELECT product_name, wafer_size_mm FROM products "
+        "ORDER BY product_id")}
     wafer_product: dict[int, str] = {}
     wafer_equipment: dict[int, list[tuple[str, str]]] = defaultdict(list)
     for wafer, chamber, tool, product in connection.execute("""
@@ -198,18 +215,22 @@ def load_observations(connection: sqlite3.Connection,
             JOIN wafers w ON w.wafer_id = r.wafer_id
             JOIN lots l ON l.lot_id = w.lot_id
             JOIN products p ON p.product_id = l.product_id
-            WHERE s.is_inspection = 0"""):
+            WHERE s.is_inspection = 0
+            ORDER BY r.run_id"""):
         wafer_equipment[wafer].append((chamber, tool))
         wafer_product[wafer] = product
 
     inspection_time = dict(connection.execute(
-        "SELECT inspection_id, inspection_time FROM inspections"))
+        "SELECT inspection_id, inspection_time FROM inspections "
+        "ORDER BY inspection_id"))
     inspection_area = dict(connection.execute(
-        "SELECT inspection_id, scan_area_mm2 FROM inspections"))
+        "SELECT inspection_id, scan_area_mm2 FROM inspections "
+        "ORDER BY inspection_id"))
     counted: dict[tuple[int, int, str], list[int]] = defaultdict(
         lambda: [0, 0])
     for inspection, wafer, x_mm, y_mm, layer in connection.execute(
-            "SELECT inspection_id, wafer_id, x_mm, y_mm, layer FROM defects"):
+            "SELECT inspection_id, wafer_id, x_mm, y_mm, layer FROM defects "
+            "ORDER BY defect_id"):
         limit = EDGE_RADIUS_FRACTION * radius.get(
             wafer_product.get(wafer, ""), 150.0)
         bucket = counted[(inspection, wafer, layer)]
@@ -233,7 +254,8 @@ def load_observations(connection: sqlite3.Connection,
         SELECT y.wafer_id, p.product_name, y.yield_pct, y.test_time
         FROM wafer_yield y
         JOIN lots l ON l.lot_id = y.lot_id
-        JOIN products p ON p.product_id = l.product_id"""))
+        JOIN products p ON p.product_id = l.product_id
+        ORDER BY y.yield_id"""))
     by_product: dict[str, list[float]] = defaultdict(list)
     for _wafer, product, value, _when in yields:
         by_product[product].append(value)
@@ -252,7 +274,8 @@ def load_observations(connection: sqlite3.Connection,
                    a.alarm_time
             FROM alarms a
             JOIN chambers c ON c.chamber_id = a.chamber_id
-            JOIN tools t ON t.tool_id = c.tool_id"""):
+            JOIN tools t ON t.tool_id = c.tool_id
+            ORDER BY a.alarm_id"""):
         out.append(Observation("alm:count", _days(origin, when), 1.0,
                                {"chamber": chamber, "tool": tool}))
 
@@ -286,7 +309,8 @@ def read_roles(connection: sqlite3.Connection) -> dict[str, dict[str, str]]:
     tool: dict[str, str] = {}
     for tool_name, chamber_name, tool_type in connection.execute("""
             SELECT t.tool_name, c.chamber_name, t.tool_type
-            FROM chambers c JOIN tools t ON t.tool_id = c.tool_id"""):
+            FROM chambers c JOIN tools t ON t.tool_id = c.tool_id
+            ORDER BY c.chamber_id"""):
         chamber[f"{tool_name}/{chamber_name}"] = tool_type
         tool[tool_name] = tool_type
     return {"chamber": chamber, "tool": tool}

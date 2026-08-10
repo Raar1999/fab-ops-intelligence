@@ -92,7 +92,7 @@ def l1_schema_token_lint(dataset: Any) -> Finding:
     hits: list[str] = []
     tables = [r[0] for r in _rows(dataset.db_path,
                                   "SELECT name FROM sqlite_master "
-                                  "WHERE type='table'")]
+                                  "WHERE type='table' ORDER BY name")]
     for table in tables:
         for token in _FORBIDDEN_TOKENS:
             if token in table.lower():
@@ -112,7 +112,8 @@ def l1_schema_token_lint(dataset: Any) -> Finding:
                           ("die_bins", "bin_code"),
                           ("tool_states", "state")):
         for (value,) in _rows(dataset.db_path,
-                              f"SELECT DISTINCT {column} FROM {table}"):
+                              f"SELECT DISTINCT {column} FROM {table} "
+                              f"ORDER BY {column}"):
             for token in _FORBIDDEN_TOKENS:
                 if token in str(value).lower():
                     hits.append(f"{table}.{column} = {value!r}")
@@ -127,7 +128,7 @@ def l2_plane_separation(dataset: Any) -> Finding:
     problems: list[str] = []
     tables = {r[0] for r in _rows(dataset.db_path,
                                   "SELECT name FROM sqlite_master "
-                                  "WHERE type='table'")}
+                                  "WHERE type='table' ORDER BY name")}
     extra = sorted(tables - set(SCHEMA_TABLES))
     if extra:
         problems.append(f"extra tables {extra}")
@@ -211,7 +212,8 @@ def _wafer_features(db_path: Path) -> dict[int, tuple[float, float, float]]:
             FROM defects d
             JOIN wafers w ON w.wafer_id = d.wafer_id
             JOIN lots l ON l.lot_id = w.lot_id
-            JOIN products p ON p.product_id = l.product_id"""):
+            JOIN products p ON p.product_id = l.product_id
+            ORDER BY d.defect_id"""):
         counts[wafer] += 1
         bucket = edge[wafer]
         bucket[1] += 1
@@ -227,7 +229,8 @@ def _wafer_features(db_path: Path) -> dict[int, tuple[float, float, float]]:
             JOIN lots l ON l.lot_id = w.lot_id
             JOIN recipes rc ON rc.step_id = f.step_id
                            AND rc.product_id = l.product_id
-            WHERE m.param_name LIKE 'cd_nm_%' AND m.param_name != 'cd_nm_sigma'"""):
+            WHERE m.param_name LIKE 'cd_nm_%' AND m.param_name != 'cd_nm_sigma'
+            ORDER BY m.metrology_id"""):
         if target:
             deviation[wafer].append(abs(value - target) / target)
 
@@ -277,11 +280,13 @@ def l4_perfect_separation(dataset: Any) -> Finding:
         return Finding("L4 perfect separation", True, "no cohort",
                        skipped=True)
     problems: list[str] = []
-    for table, column in (("defects", "classified_type"),
-                          ("defects", "layer"),
-                          ("die_bins", "bin_code")):
+    for table, column, order in (("defects", "classified_type", "defect_id"),
+                                 ("defects", "layer", "defect_id"),
+                                 ("die_bins", "bin_code",
+                                  "wafer_id, die_x, die_y")):
         rows = _rows(dataset.db_path,
-                     f"SELECT wafer_id, {column} FROM {table}")
+                     f"SELECT wafer_id, {column} FROM {table} "
+                     f"ORDER BY {order}")
         support: dict[str, list[int]] = defaultdict(lambda: [0, 0])
         for wafer, value in rows:
             support[str(value)][0 if wafer in affected else 1] += 1
@@ -367,7 +372,8 @@ def l6_signature_overlap(dataset: Any) -> Finding:
             SELECT d.wafer_id, d.x_mm, d.y_mm, p.wafer_size_mm
             FROM defects d JOIN wafers w ON w.wafer_id = d.wafer_id
             JOIN lots l ON l.lot_id = w.lot_id
-            JOIN products p ON p.product_id = l.product_id"""):
+            JOIN products p ON p.product_id = l.product_id
+            ORDER BY d.defect_id"""):
         bucket = per_wafer[wafer]
         bucket[1] += 1
         if math.hypot(x_mm, y_mm) >= EDGE_RADIUS_FRACTION * (size / 2.0):
@@ -631,15 +637,18 @@ def l10_constant_fingerprint(dataset: Any) -> Finding:
         return Finding("L10 constant fingerprint", True, "no cohort",
                        skipped=True)
     problems: list[str] = []
-    for table, column in (("wafer_yield", "yield_pct"),
-                          ("defects", "size_um"), ("defects", "x_mm"),
-                          ("metrology", "value"),
-                          ("run_measurements", "value")):
+    for table, column, order in (("wafer_yield", "yield_pct", "yield_id"),
+                                 ("defects", "size_um", "defect_id"),
+                                 ("defects", "x_mm", "defect_id"),
+                                 ("metrology", "value", "metrology_id"),
+                                 ("run_measurements", "value",
+                                  "run_meas_id")):
         join = ("" if table in ("wafer_yield", "defects", "metrology")
                 else "JOIN runs r ON r.run_id = t.run_id ")
         key = "t.wafer_id" if not join else "r.wafer_id"
         rows = _rows(dataset.db_path,
-                     f"SELECT {key}, t.{column} FROM {table} t {join}")
+                     f"SELECT {key}, t.{column} FROM {table} t {join}"
+                     f"ORDER BY t.{order}")
         inside = [v for w, v in rows if w in affected]
         outside = [v for w, v in rows if w not in affected]
         if len(inside) < 10 or len(outside) < 10:

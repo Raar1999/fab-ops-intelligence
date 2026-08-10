@@ -818,7 +818,8 @@ def check_a11() -> Verdict:
         connection = sqlite3.connect(str(legacy_db))
         try:
             tables = {r[0] for r in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'")}
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "ORDER BY name")}
         finally:
             connection.close()
         if not {"run_history", "yield_data"} <= tables:

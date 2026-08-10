@@ -19,6 +19,15 @@ one unable to grade it.
 Everything is stdlib: `sqlite3` and arithmetic. `fabeval` does not need
 pandas to compute a mean, and staying dependency-free keeps the evaluation
 layer as portable as the thing it evaluates.
+
+**Every multi-row query carries a total `ORDER BY`, on a primary key.** SQL
+lets a database return rows in any order unless the query states one, and each
+function here folds those rows into a float — a mean, a share, a difference of
+means — so two orders of the same rows are two answers differing in their last
+bits. `zscore` then sums the peers in dictionary order and `rank` breaks ties
+by insertion order, which is where a last-bit difference becomes a different
+chamber at the top of a table. Ordering on a non-unique column would leave the
+ties where they started, so the key is always the one the row is identified by.
 """
 from __future__ import annotations
 
@@ -117,7 +126,8 @@ def wafer_yields(db_path: Path | str) -> list[tuple[int, str, float]]:
         SELECT y.wafer_id, p.product_name, y.yield_pct
         FROM wafer_yield y
         JOIN lots l ON l.lot_id = y.lot_id
-        JOIN products p ON p.product_id = l.product_id""")]
+        JOIN products p ON p.product_id = l.product_id
+        ORDER BY y.yield_id""")]
 
 
 def chamber_yield_split(db_path: Path | str, operation: str = "ETCH"
@@ -142,7 +152,8 @@ def chamber_yield_split(db_path: Path | str, operation: str = "ETCH"
         JOIN tools t ON t.tool_id = c.tool_id
         JOIN lots l ON l.lot_id = y.lot_id
         JOIN products p ON p.product_id = l.product_id
-        WHERE s.operation_type = ?""", (operation,))
+        WHERE s.operation_type = ?
+        ORDER BY r.run_id""", (operation,))
 
     by_chamber_product: dict[tuple[str, str], list[float]] = defaultdict(list)
     by_product: dict[str, list[tuple[str, float]]] = defaultdict(list)
@@ -187,7 +198,8 @@ def chamber_edge_defect_share(db_path: Path | str, layer: str = "GATE",
         JOIN wafers w ON w.wafer_id = d.wafer_id
         JOIN lots l ON l.lot_id = w.lot_id
         JOIN products pr ON pr.product_id = l.product_id
-        WHERE s.operation_type = ? AND d.layer = ?""", (operation, layer))
+        WHERE s.operation_type = ? AND d.layer = ?
+        ORDER BY d.defect_id, r.run_id""", (operation, layer))
 
     counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for label, x_mm, y_mm, wafer_size in rows:
@@ -220,7 +232,8 @@ def chamber_edge_cd_deviation(db_path: Path | str, param: str = "cd_nm_edge"
         JOIN lots l ON l.lot_id = w.lot_id
         JOIN recipes rc ON rc.step_id = f.step_id
                        AND rc.product_id = l.product_id
-        WHERE m.param_name = ?""", (param,))
+        WHERE m.param_name = ?
+        ORDER BY m.metrology_id""", (param,))
     values: dict[str, list[float]] = defaultdict(list)
     for label, value, target in rows:
         if target:
@@ -252,7 +265,8 @@ def metric_trend(db_path: Path | str, cut: str, param: str = "cd_nm_center"
         JOIN lots l ON l.lot_id = w.lot_id
         JOIN recipes rc ON rc.step_id = f.step_id
                        AND rc.product_id = l.product_id
-        WHERE m.param_name = ?""", (param,))
+        WHERE m.param_name = ?
+        ORDER BY m.metrology_id""", (param,))
     early: dict[str, list[float]] = defaultdict(list)
     late: dict[str, list[float]] = defaultdict(list)
     for label, when, value, target in rows:
@@ -274,7 +288,7 @@ def alarm_counts(db_path: Path | str, prefix: str | None = None
         FROM alarms a
         JOIN chambers c ON c.chamber_id = a.chamber_id
         JOIN tools t ON t.tool_id = c.tool_id
-        GROUP BY 1""")
+        GROUP BY 1 ORDER BY 1""")
     return {label: ChamberScore(label, float(count), count)
             for label, count in rows
             if prefix is None or label.startswith(prefix)}
@@ -311,7 +325,8 @@ def maintenance_contrast(db_path: Path | str, chamber_label: str,
         FROM inspections i
         WHERE EXISTS(SELECT 1 FROM defects d
                      WHERE d.inspection_id = i.inspection_id
-                       AND d.layer = ?)""", (tool, chamber, layer))
+                       AND d.layer = ?)
+        ORDER BY i.inspection_id""", (tool, chamber, layer))
 
     def mean_of(exposed: bool, before: bool, boundary: str) -> float | None:
         values = [n for when, n, flag in rows
@@ -347,7 +362,8 @@ def product_tool_exposure(db_path: Path | str, start: str, end: str,
         JOIN wafers w ON w.wafer_id = r.wafer_id
         JOIN lots l ON l.lot_id = w.lot_id
         JOIN products p ON p.product_id = l.product_id
-        WHERE s.operation_type = ?""", (operation,))
+        WHERE s.operation_type = ?
+        ORDER BY r.run_id""", (operation,))
     inside: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     outside: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for product, tool, when in rows:
