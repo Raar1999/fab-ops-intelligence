@@ -19,7 +19,7 @@ A yield/process/data interview in this industry is really testing one thing: *ca
 ## The investigation (8 steps)
 
 The full narrative — with code, tables, and inline charts — lives in
-**[`notebooks/investigation.ipynb`](notebooks/investigation.ipynb)** and reproduces exactly via `python -m src.investigation`.
+**[`notebooks/investigation.ipynb`](notebooks/investigation.ipynb)** and reproduces exactly via `python -m fabops.investigation`.
 
 **1 · Symptom — every product misses target by ~9 pts.** Uniform loss across the catalogue argues against a product cause and points at shared infrastructure.
 
@@ -66,7 +66,16 @@ and told nothing, is separate:
 
 ```bash
 fabops-diagnose path/to/fab.db     # prints a fabops.investigation/v1 report
+```
 
+It reads one schema v2 database, is told nothing else, and may answer
+*insufficient evidence* — which on a fault-free dataset is the only correct
+answer. What it can and cannot do is measured in `docs/design/DIAGNOSIS_CONTRACT.md`;
+no number it produces is a capability claim yet.
+
+Back to the demonstration pipeline:
+
+```bash
 # 4. launch the interactive dashboard
 streamlit run app/ops_dashboard.py
 
@@ -92,21 +101,43 @@ fab-operations-analytics/
 │   ├── star_model.sql              # fact_yield star table for fast BI aggregation
 │   ├── views.sql                   # the analytical views (the logic lives here)
 │   └── rca_queries.sql             # the investigation as a documented query library
-├── src/fabops/
+├── src/fabops/                     # reads the observable plane, and only that
 │   ├── db.py                       # data-access layer (SQL → pandas)
 │   ├── build_db.py                 # one command to stand up the DB + views
 │   ├── charts.py                   # every figure, rendered with matplotlib
-│   └── investigation.py            # the end-to-end RCA driver
+│   ├── investigation.py            # the LEGACY narrated demo (conclusion is a constant)
+│   └── diagnosis/                  # the answer-blind engine: diagnose(db_path)
+├── src/fabsim/                     # the simulator: builds the fab, writes both planes
+│   ├── world.py timeline.py latent.py response.py observation.py
+│   ├── defects.py die.py           # the causal chain, mechanism → … → yield
+│   ├── mechanisms/                 # what a fault physically does
+│   └── emit/                       # observable dataset + hidden truth + manifest
+├── src/fabeval/                    # the evaluator: the ONE place both planes may join
+│   ├── queries.py                  # reference analytical queries (observable only)
+│   ├── leakage.py acceptance.py    # L1–L11 and A1–A11, as machine checks
+│   └── matrix.py diagnosisscore.py # the benchmark, and report-vs-answer-key scoring
+├── scenarios/                      # scenario configs + world template (fabsim reads these)
 ├── notebooks/
 │   └── investigation.ipynb         # the narrative version (executed, with outputs)
 ├── app/
 │   └── ops_dashboard.py            # Streamlit dashboard (Overview / Yield / RCA / Maps)
 ├── tests/
-│   ├── conftest.py
-│   └── test_queries.py             # schema integrity + the RCA findings hold
-├── docs/                           # audit, architecture decisions, roadmap
+│   ├── test_queries.py             # legacy: schema integrity + the RCA findings hold
+│   └── fabsim/ fabops/ fabeval/    # the generation, engine and evaluation planes
+├── docs/                           # audit, design contracts, architecture decisions, roadmap
 └── reports/figures/                # generated charts (embedded above)
 ```
+
+**Two systems live here, and the separation is the point.** The legacy pipeline
+above (`data/`, `sql/`, `src/fabops/{db,charts,investigation}.py`, the notebook,
+the dashboard) narrates a *planted* conclusion on a schema v1 database. Alongside
+it, `fabsim` generates synthetic fabs whose faults are physics-mediated and whose
+answer key is a physically separate file, `fabops.diagnosis` investigates one of
+those datasets knowing nothing but a database path, and `fabeval` is the only
+component permitted to hold both the answer and the report at once. The rules
+that keep those planes apart — and the checks that enforce them — are in
+[`docs/design/`](docs/design/); the decisions behind them are in
+[`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md).
 
 ## Design notes
 

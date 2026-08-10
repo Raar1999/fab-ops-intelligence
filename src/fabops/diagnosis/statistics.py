@@ -146,18 +146,29 @@ STATISTICS: Mapping[str, Statistic] = MappingProxyType({
 
 #: The declared default. Chosen on **fault-free calibration**, never on fault
 #: performance - which is the only selection criterion available to an engine
-#: that may not claim a benchmark number yet. Measured on 200 fault-free worlds
-#: and on the 25 held-out fault datasets:
+#: that may not claim a benchmark number yet.
 #:
-#:     statistic           null p<=.01/.05/.10/.20      held-out det / rank-1
-#:     own_scale_step      .005 / .055 / .105 / .190     1/25 / 6/25   VALID
-#:     standardized_step   .010 / .073 / .148 / .243     6/25 / 8/25   ~1.45x hot
-#:     trend_contrast      not measured                  not measured
+#: **The measured table lives in ADR-029 §8 and `DIAGNOSIS_CONTRACT.md` §8.1,
+#: and deliberately not here.** It used to be restated in this comment, and the
+#: restatement disagreed with both of those on every null-calibration figure -
+#: two records of one measurement, written minutes apart, and neither
+#: reproducible from what it wrote down. The Final Integration gate resolved it
+#: the way ADR-011 resolves this whole class of problem: the artifact that owns
+#: a number keeps it and the code cites rather than copies. Read either
+#: document for the figures. What a reader of *this module* needs is the
+#: reason, and the reason does not go stale.
 #:
-#: `standardized_step` finds more and states a level it does not keep; an
-#: abstention is a claim, and a mis-calibrated claim is worse than a weak one.
-#: The registry keeps it because the >=10-scenario benchmark is what should
-#: choose between them, and it should choose from a table rather than folklore.
+#: `own_scale_step` is calibrated at every declared level and can still be
+#: moved by a mutation - both halves are required, since a statistic that
+#: cannot move is inert whatever its calibration. `standardized_step` finds
+#: more and states a level it does not keep: pooling the denominator across a
+#: stratum lets a candidate whose exposure makes its series noisier come out
+#: extreme on every channel at once, which is the exact shape cross-family
+#: convergence exists to detect. An abstention is a claim, and a mis-calibrated
+#: claim is worse than a weak one, so the calibrated statistic ships and the
+#: powerful one stays registered beside it with its cost on the record.
+#: `trend_contrast` is registered and unmeasured. The >=10-scenario benchmark
+#: is what should choose among them, from a table rather than from folklore.
 DEFAULT_STATISTIC = "own_scale_step"
 
 

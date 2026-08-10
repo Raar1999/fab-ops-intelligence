@@ -1,15 +1,15 @@
 """
 Tests for the static half of `docs/design/DIAGNOSIS_CONTRACT.md` §6.
 
-No diagnosis engine exists yet — the contract is a design gate. What can be
-tested today is the *checker*: the five source-level rules the engine will
-have to pass. Building them now, with a violating module to prove they fire
-and a conforming one to prove they are not vacuous, means the next gate
-inherits a harness that already works instead of writing the rules and the
-code that must satisfy them in the same sitting.
+This module was written before the engine existed, when the contract was still
+a design gate: what could be tested then was the *checker* — the five
+source-level rules the engine would have to pass — with a violating module to
+prove the rules fire and a conforming one to prove they are not vacuous.
 
-The last test arms itself: the moment `src/fabops/diagnosis/` appears, the
-checks run against it for real.
+**The engine has since landed** (`src/fabops/diagnosis/`, ADR-029), so the last
+test no longer skips: it runs every rule against the real package. The mutation
+pair is kept rather than retired, because a checker that has never been seen to
+fail proves nothing about the module it now passes.
 """
 from __future__ import annotations
 

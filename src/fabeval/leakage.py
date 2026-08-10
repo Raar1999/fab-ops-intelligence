@@ -39,7 +39,8 @@ from fabeval.queries import (
 )
 
 __all__ = ["CROSS_DATASET_TESTS", "Finding", "L7_CHANNELS", "LEAKAGE_TESTS",
-           "l7_null_calibration", "run_leakage_suite"]
+           "code_surfaces", "l7_null_calibration", "notebook_source",
+           "run_leakage_suite"]
 
 #: Tokens L1 forbids anywhere in the observable schema or its vocabularies.
 _FORBIDDEN_TOKENS = ("fault", "truth", "scenario", "bad", "marginal",
@@ -554,6 +555,44 @@ def l8_seed_sensitivity(datasets: Sequence[Any]) -> Finding:
         f"{len(semantics)} distinct scenario semantics (want 1)")
 
 
+def notebook_source(path: Path) -> str:
+    """A notebook's code cells, joined into one module-shaped source string.
+
+    Markdown and stored outputs are deliberately excluded: this is a *code*-
+    plane lint, so what it reads is what a reader could execute. A dataset path
+    printed into a saved output is a record of a run, not an import.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return "\n".join(
+        "".join(cell.get("source", ()))
+        for cell in payload.get("cells", ())
+        if cell.get("cell_type") == "code")
+
+
+def code_surfaces(directory: Path) -> list[tuple[str, str]]:
+    """Every file under `directory` a human could put an import into.
+
+    **Notebooks count, and until the Final Integration gate they were not
+    read.** `ANTI_LEAKAGE_DESIGN.md` L9, `PHASE_1_ACCEPTANCE.md` A10 and
+    `GROUND_TRUTH_CONTRACT.md` §4 all name the notebooks as a surface this rule
+    covers; the implementation listed `notebooks/` as a root and then globbed
+    `*.py` in a directory that holds exactly one `.ipynb`, so the scan matched
+    nothing there and L9 could not fail on the one surface it was written for.
+    The notebook was clean when this was found. A check that cannot fail is not
+    evidence that it stays clean, which is the standard this repository already
+    holds its other boundary checks to.
+    """
+    out: list[tuple[str, str]] = []
+    for path in sorted(directory.rglob("*")):
+        if "__pycache__" in path.parts or not path.is_file():
+            continue
+        if path.suffix == ".py":
+            out.append((path.name, path.read_text(encoding="utf-8")))
+        elif path.suffix == ".ipynb":
+            out.append((path.name, notebook_source(path)))
+    return out
+
+
 def l9_code_plane_lint(_dataset: Any = None) -> Finding:
     """`fabops`, `app` and the notebooks reach neither plane of a dataset."""
     repository = Path(__file__).resolve().parents[2]
@@ -562,11 +601,13 @@ def l9_code_plane_lint(_dataset: Any = None) -> Finding:
         directory = repository / root
         if not directory.exists():
             continue
-        for module in sorted(directory.rglob("*.py")):
-            if "__pycache__" in module.parts:
+        for label, source in code_surfaces(directory):
+            try:
+                tree = ast.parse(source)
+            except SyntaxError as unparsable:            # pragma: no cover
+                problems.append(f"{label} does not parse as Python "
+                                f"({unparsable}), so it cannot be scanned")
                 continue
-            source = module.read_text(encoding="utf-8")
-            tree = ast.parse(source)
             for node in ast.walk(tree):
                 names: list[str] = []
                 if isinstance(node, ast.Import):
@@ -575,10 +616,10 @@ def l9_code_plane_lint(_dataset: Any = None) -> Finding:
                     names = [node.module]
                 for name in names:
                     if name.split(".")[0] in ("fabsim", "fabeval"):
-                        problems.append(f"{module.name} imports {name}")
+                        problems.append(f"{label} imports {name}")
             for token in ("truth.json", "truth/", "scenarios/"):
                 if token in source:
-                    problems.append(f"{module.name} names {token!r}")
+                    problems.append(f"{label} names {token!r}")
     return Finding("L9 code-plane lint", not problems,
                    "clean" if not problems else "; ".join(problems))
 

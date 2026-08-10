@@ -250,8 +250,8 @@ The legacy surfaces are untouched: `data/generate_fab_db.py` byte-identical, leg
 - [x] Schema v2 DDL + emit path (SQLite + portable dump + manifest) — `src/fabsim/emit/`
 - [x] Truth emitter (`fabsim.truth/v1`) — `src/fabsim/emit/truth.py`; the schema *validator* remains open
 - [x] Generator self-test suite (A4) wired into every build — `src/fabsim/selftest.py`
-- [ ] Anti-leakage suite L1–L11 + reference-query fixtures in `eval/`
-- [ ] Five library datasets generated deterministically in CI
+- [x] Anti-leakage suite L1–L11 + reference-query fixtures in `eval/` — delivered as `src/fabeval/` (`leakage.py`, `queries.py`, `fixtures.py`); the *role* is exactly what this line describes and only the directory differs, because a root-level `eval/` would need the `sys.path` manipulation ADR-009 removed and `eval` is a builtin name. **ADR-024** records the relocation
+- [ ] Five library datasets generated deterministically in CI — the determinism itself is verified locally (A1 checks 1–3, and `tests/fabsim/test_emit.py` re-verifies emission across processes under a changed hash seed, locale and timezone); what waits on CI is running it *there*
 - [x] pytest coverage: rng substreams, routing, mechanism math, kill model, invariants — *the generation planes; the emit/benchmark surfaces below remain open*
 - [x] `scenarios/README.md` maintainers' index (id ↔ slug ↔ answer summary)
 - [ ] Documentation updates confined to: this design set marked "as implemented" deltas, README pointer to fabsim (no claims beyond what A1–A11 prove)

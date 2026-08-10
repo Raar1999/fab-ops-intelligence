@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 from pathlib import Path
 
 import pytest
@@ -32,8 +33,8 @@ def modules() -> list[Path]:
                   if "__pycache__" not in p.parts)
 
 
-def imports_of(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+def imports_of_source(source: str) -> set[str]:
+    tree = ast.parse(source)
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -41,6 +42,10 @@ def imports_of(path: Path) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and node.module:
             names.add(node.module)
     return names
+
+
+def imports_of(path: Path) -> set[str]:
+    return imports_of_source(path.read_text(encoding="utf-8"))
 
 
 def code_strings(path: Path) -> list[str]:
@@ -63,19 +68,84 @@ def code_strings(path: Path) -> list[str]:
 
 
 def test_fabops_reaches_neither_plane():
-    """A10 / L9, in the direction that matters most."""
+    """A10 / L9, in the direction that matters most.
+
+    Every *code surface*, not every `.py`. The reader is imported from
+    `fabeval.leakage` rather than reimplemented here, so this test and the
+    shipped check cannot drift into two different definitions of what "the code
+    plane" is — which is exactly how the notebook came to be listed as covered
+    while never being read.
+    """
+    from fabeval.leakage import code_surfaces
+
+    scanned: list[str] = []
     for root in ("src/fabops", "app", "notebooks"):
         directory = REPOSITORY / root
         if not directory.exists():
             continue
-        for module in sorted(directory.rglob("*.py")):
-            if "__pycache__" in module.parts:
-                continue
-            source = module.read_text(encoding="utf-8")
-            for name in imports_of(module):
-                assert name.split(".")[0] not in ("fabsim", "fabeval"), module
+        for label, source in code_surfaces(directory):
+            scanned.append(label)
+            for name in imports_of_source(source):
+                assert name.split(".")[0] not in ("fabsim", "fabeval"), label
             for token in ("truth.json", "truth/", "scenarios/"):
-                assert token not in source, (module, token)
+                assert token not in source, (label, token)
+    assert len(scanned) >= 6, scanned
+
+
+def test_the_notebook_is_one_of_the_surfaces_that_gets_scanned():
+    """The gap this closes: `notebooks/` was named as a root and then, because
+    the scan globbed `*.py` into a directory holding one `.ipynb`, contributed
+    nothing at all. A root that matches no file is a root that cannot fail."""
+    from fabeval.leakage import code_surfaces
+
+    labels = [label for label, _ in code_surfaces(REPOSITORY / "notebooks")]
+    assert labels, "notebooks/ contributes no code surface to L9"
+    assert any(label.endswith(".ipynb") for label in labels), labels
+
+
+def test_l9_fires_on_a_notebook_that_reaches_for_the_hidden_plane(tmp_path):
+    """The mutation. A checker nobody has seen fail proves nothing."""
+    from fabeval.leakage import code_surfaces
+
+    (tmp_path / "leaky.ipynb").write_text(json.dumps({"cells": [
+        {"cell_type": "markdown", "source": ["# ordinary prose\n"]},
+        {"cell_type": "code", "source": [
+            "from fabsim.emit import build_dataset\n",
+            "answer = open('data/scenarios/x/truth/truth.json')\n"]},
+    ]}), encoding="utf-8")
+
+    surfaces = code_surfaces(tmp_path)
+    assert [label for label, _ in surfaces] == ["leaky.ipynb"]
+    _label, source = surfaces[0]
+
+    assert "ordinary prose" not in source, "markdown is not a code surface"
+    assert any(name.split(".")[0] == "fabsim"
+               for name in imports_of_source(source)), source
+    assert "truth/" in source
+
+
+def test_l9_does_not_fire_on_a_path_that_only_appears_in_a_stored_output(
+        tmp_path):
+    """And it must not fire on one.
+
+    An executed notebook carries the output of every cell it ran. A dataset
+    path printed by a past run is a record of that run, not an import, and a
+    check that read stored outputs would flag every notebook this project ships
+    executed — which is how a check gets switched off.
+    """
+    from fabeval.leakage import notebook_source
+
+    path = tmp_path / "executed.ipynb"
+    path.write_text(json.dumps({"cells": [{
+        "cell_type": "code",
+        "source": ["print('done')\n"],
+        "outputs": [{"output_type": "stream", "name": "stdout",
+                     "text": ["wrote data/scenarios/x/truth/truth.json\n"]}],
+    }]}), encoding="utf-8")
+
+    source = notebook_source(path)
+    assert source.strip() == "print('done')"
+    assert "truth/" not in source
 
 
 def test_fabsim_does_not_import_its_own_grader():
