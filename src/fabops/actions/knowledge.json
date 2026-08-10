@@ -1,0 +1,103 @@
+{
+  "schema": "fabops.knowledge/v1",
+  "version": "1.0.0",
+  "source": "built-in",
+  "note": "Evidence signature -> engineering checks. This table maps *what was observed* onto *what to go and look at*; it never names a mechanism as a conclusion, because no observable channel in this schema identifies one (DIAGNOSIS_CONTRACT.md 5.2). It is the small versioned local knowledge table FABOPS_VS_FABKG_BOUNDARY.md section 3 permits, and it is a data file rather than code so that a FabKG-supplied replacement is a file swap and not a release.",
+  "families": ["metrology", "fdc", "defects", "yield", "alarms"],
+  "always": [
+    "Fix the window before the subject: confirm the onset interval from the evidence rather than from when somebody noticed.",
+    "Check what else changed in the window - a recipe version, a routing shift, an inspection setting - before attributing anything to the subject.",
+    "Record the state of the subject before intervening; a repair destroys the evidence for the investigation that follows it."
+  ],
+  "insufficient_evidence": [
+    "No containment action is justified: the evidence does not separate any candidate from relabelled peers.",
+    "Keep watching. Re-run the investigation when the window has more material in it, or when a monitor raises a signal on a specific entity.",
+    "If a subject is suspected on grounds outside this data, name it explicitly and re-run the impact estimate against it rather than inferring it from this report."
+  ],
+  "per_family": {
+    "metrology": {
+      "summary": "post-step measurements departed from the recipe target relative to same-role peers",
+      "checks": [
+        "Compare the subject's zonal readings against its own pre-onset window, zone by zone, before comparing it against its peers.",
+        "Rule the instrument out: re-measure a sample of the subject's wafers on a different metrology tool.",
+        "Read the subject's qualification record and any recipe or setpoint change against the onset interval."
+      ],
+      "containment": [
+        "Re-measure the most exposed lots at the affected step before they move on."
+      ]
+    },
+    "fdc": {
+      "summary": "run summaries departed from the setpoints the recipe recorded, relative to same-role peers",
+      "checks": [
+        "Read the subject's residuals parameter by parameter and identify which subsystem the departure sits in.",
+        "Check calibration and consumable-life records against the onset interval.",
+        "Verify the delivered setpoint independently of the controller reporting it."
+      ],
+      "containment": [
+        "Hold further releases to the subject until the residual is explained or the subsystem is cleared."
+      ]
+    },
+    "defects": {
+      "summary": "the subject's wafers carry a defect rate or spatial distribution unlike its peers'",
+      "checks": [
+        "Re-inspect a sample of the subject's wafers and compare the radial profile against a peer's from the same window.",
+        "Separate added defectivity from an inspection change by reading the scanner's own settings over the window.",
+        "Read the subject's clean and preventive-maintenance history against the onset interval."
+      ],
+      "containment": [
+        "Re-inspect the most exposed lots; hold material that has not yet reached the next inspection step."
+      ]
+    },
+    "yield": {
+      "summary": "the subject's wafers yielded below their within-product peers",
+      "checks": [
+        "Confirm the deficit survives a within-product comparison and exceeds the spread between peers before acting on it.",
+        "Overlay the die-bin map of the subject's worst wafers with their defect coordinates."
+      ],
+      "containment": [
+        "Prioritise the most exposed lots for final-test review."
+      ],
+      "caution": "Cohort yield is the most attenuated channel in the chain: on twelve fault-free worlds each etch tool was the worst one on it about a third of the time (ADR-028). Treat it as corroboration, never as the reason."
+    },
+    "alarms": {
+      "summary": "the subject raised more coded alarms than its same-role peers",
+      "checks": [
+        "Group the subject's alarm codes by subsystem and check whether they cluster before or after the onset.",
+        "Match each escalation to a maintenance window and confirm the intervention actually happened."
+      ],
+      "containment": [],
+      "caution": "A healthy chamber in this fab draws background alarms and gets repaired for them by design (ADR-017). An alarm count above peers is a prompt to look, not a finding."
+    }
+  },
+  "combinations": [
+    {
+      "families": ["fdc", "metrology"],
+      "summary": "a process departure that reached the measured result",
+      "checks": [
+        "Follow the chain in one direction: which parameter moved, then whether the measured feature moved with it, then whether the two moved at the same time.",
+        "If the parameter moved and the measurement did not, suspect the reading before the process."
+      ]
+    },
+    {
+      "families": ["defects", "metrology"],
+      "summary": "a measured departure with a defect distribution that matches it",
+      "checks": [
+        "Compare the within-wafer measurement profile against the defect radial profile on the same wafers; a shared shape is stronger evidence than either alone."
+      ]
+    },
+    {
+      "families": ["alarms", "fdc"],
+      "summary": "the subject complained about the same subsystem its residuals moved on",
+      "checks": [
+        "Check whether the alarm codes name the subsystem the residual points at; a mismatch is worth as much as a match."
+      ]
+    },
+    {
+      "families": ["defects", "yield"],
+      "summary": "added defectivity that reached final test",
+      "checks": [
+        "Overlay defect coordinates on the die-bin map for the subject's exposed wafers and check that the failing die are where the defects are."
+      ]
+    }
+  ]
+}

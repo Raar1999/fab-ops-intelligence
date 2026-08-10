@@ -50,7 +50,15 @@ REPO = Path(__file__).resolve().parents[1]
 #: different database and are scoped out on purpose — see
 #: `test_the_legacy_demo_surface_is_row_order_stable`, which measures that
 #: rather than assuming it.
-ANALYSIS_PACKAGES = ("src/fabops/diagnosis", "src/fabeval")
+#:
+#: The Phase 2–7 packages join the list as they land, for the same reason the
+#: original two are on it: each folds rows into floats and the surfaces above
+#: them turn floats into ranks. `fabops.semantic` also enforces the rule in its
+#: own signature — `read(..., order_by=...)` has no default — so a caller has
+#: to state an order before the lint ever sees the query.
+ANALYSIS_PACKAGES = ("src/fabops/diagnosis", "src/fabops/semantic",
+                     "src/fabops/monitors", "src/fabops/impact",
+                     "src/fabops/actions", "src/fabops/report", "src/fabeval")
 
 #: A query returning at most one row has no order to depend on.
 _SINGLE_ROW = ("FROM dataset_meta",)
@@ -64,6 +72,12 @@ _AGGREGATES = ("COUNT(", "SUM(", "AVG(", "MIN(", "MAX(", "TOTAL(")
 
 def _returns_one_row(sql: str) -> bool:
     if any(marker in sql for marker in _SINGLE_ROW):
+        return True
+    # `LIMIT 0` returns no rows at all — it is how a caller reads a cursor's
+    # column names — so there is no order for anything to depend on. `LIMIT 1`
+    # is deliberately *not* exempt: without an order it returns whichever row
+    # the planner reached first, which is the defect this lint exists for.
+    if re.search(r"\bLIMIT\s+0\b", sql, re.I):
         return True
     head = sql.upper().split("FROM", 1)[0]
     return (any(fn in head for fn in _AGGREGATES)
@@ -118,8 +132,14 @@ def _sql_literals(path: Path) -> list[tuple[int, str]]:
 def test_every_multi_row_query_in_the_analysis_plane_states_an_order():
     """The static clause. A query added later without one fails here."""
     offenders: list[str] = []
+    scanned = 0
     for package in ANALYSIS_PACKAGES:
-        for path in sorted((REPO / package).rglob("*.py")):
+        directory = REPO / package
+        assert directory.is_dir(), (
+            f"{package} is on the list and does not exist; a package that is "
+            f"listed and absent is a package this lint silently skips")
+        for path in sorted(directory.rglob("*.py")):
+            scanned += 1
             for line, sql in _sql_literals(path):
                 # A correlated EXISTS(...) is a predicate, not a row sequence.
                 outer = re.sub(r"EXISTS\s*\(SELECT.*?\)", "", sql,
@@ -136,6 +156,9 @@ def test_every_multi_row_query_in_the_analysis_plane_states_an_order():
     assert not offenders, (
         "these queries let the storage engine choose the row order, and the "
         "value they feed is accumulated in float:\n  " + "\n  ".join(offenders))
+    assert scanned >= 20, (
+        f"only {scanned} modules were read; a lint that stops finding files "
+        f"stops finding defects")
 
 
 class _ShuffledRows:
@@ -175,6 +198,10 @@ class _PlannerFromHell:
             self._rng.shuffle(rows)
         return _ShuffledRows(rows)
 
+    def executescript(self, sql):
+        """Installing a view layer is a DDL statement, not a row sequence."""
+        return self._inner.executescript(sql)
+
     def close(self):
         self._inner.close()
 
@@ -210,6 +237,44 @@ def test_the_report_survives_a_hostile_row_order(worlds, hostile_planner,
         assert _report(db_path) == baseline, (
             f"the report on {scenario} moved when the rows arrived in a "
             f"different order (shuffle seed {seed})")
+
+
+@pytest.mark.parametrize("scenario", ["null_baseline",
+                                      "chamber_edge_uniformity"])
+def test_the_monitor_report_survives_a_hostile_row_order(worlds,
+                                                         hostile_planner,
+                                                         scenario):
+    """The Phase 3 plane, held to the same rule as the engine.
+
+    Every family folds rows into daily means and then into control limits, and
+    a limit is a threshold a value is either side of — the same place a last-bit
+    difference becomes a different answer.
+    """
+    from fabops.monitors import monitor
+
+    db_path = worlds[scenario]["db_path"]
+    baseline = json.dumps(monitor(db_path).to_dict(), sort_keys=True)
+    for seed in (6, 7):
+        hostile_planner(seed)
+        assert json.dumps(monitor(db_path).to_dict(),
+                          sort_keys=True) == baseline, (
+            f"the monitor report on {scenario} moved when the rows arrived in "
+            f"a different order (shuffle seed {seed})")
+
+
+def test_the_decision_artifact_survives_a_hostile_row_order(worlds,
+                                                            hostile_planner):
+    """The Phase 7 plane. Impact is a difference of means over rows, and
+    containment is a *ranking* of lots by exposure."""
+    from fabops.report import build_report
+
+    db_path = worlds["chamber_edge_uniformity"]["db_path"]
+    subject = "ETCH-01/A"
+    baseline = build_report(db_path, subject=subject).to_json(indent=None)
+    for seed in (8, 9):
+        hostile_planner(seed)
+        assert build_report(db_path,
+                            subject=subject).to_json(indent=None) == baseline
 
 
 def test_the_reference_queries_survive_a_hostile_row_order(worlds,
