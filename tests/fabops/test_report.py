@@ -209,16 +209,45 @@ def test_an_override_naming_an_unknown_family_is_rejected(tmp_path):
     assert "telepathy" in table.rejected
 
 
+#: The mechanism and latent vocabulary. Declared once so the scan and the
+#: mutation that proves it works are the same expression.
+MECHANISM_WORDS = ("chamber_edge_uniformity", "param_drift",
+                   "particle_excursion", "benign_offset", "edge_uniformity",
+                   "particle_load", "param_bias")
+
+
+def mechanism_hits(text: str) -> list[str]:
+    lowered = text.lower()
+    return [word for word in MECHANISM_WORDS if word in lowered]
+
+
 def test_no_recommendation_names_a_mechanism():
     """`DIAGNOSIS_CONTRACT.md` §5.2: no observable channel identifies which
     mechanism acted, so nothing downstream may claim one. The table maps
     evidence onto *checks*, which is what the boundary document permits."""
-    forbidden = ("chamber_edge_uniformity", "param_drift", "particle_excursion",
-                 "benign_offset", "edge_uniformity", "particle_load",
-                 "param_bias")
-    text = DEFAULT_KNOWLEDGE_PATH.read_text(encoding="utf-8").lower()
-    for word in forbidden:
-        assert word not in text, word
+    assert not mechanism_hits(
+        DEFAULT_KNOWLEDGE_PATH.read_text(encoding="utf-8"))
+
+
+def test_the_mechanism_scan_fires_on_a_table_that_names_one(tmp_path):
+    """The mirror of the test above. A knowledge table that named the
+    mechanism library would be matching a catalogue, and the scan that forbids
+    it has to be able to catch one."""
+    payload = json.loads(DEFAULT_KNOWLEDGE_PATH.read_text(encoding="utf-8"))
+    payload["per_family"]["metrology"]["checks"].append(
+        "Suspect a chamber_edge_uniformity fault and confirm it.")
+    poisoned = tmp_path / "poisoned.json"
+    poisoned.write_text(json.dumps(payload), encoding="utf-8")
+
+    hits = mechanism_hits(poisoned.read_text(encoding="utf-8"))
+    assert "chamber_edge_uniformity" in hits, "the mutation did not take"
+
+    # It is schema-valid, and that is the point: the loader accepts it without
+    # complaint, so the *scan* is the only thing standing between this
+    # repository and a mechanism catalogue.
+    accepted = load_knowledge(poisoned)
+    assert not accepted.rejected
+    assert accepted.source != "built-in" or accepted.version
 
 
 def test_an_empty_signature_recommends_no_subject_specific_action():

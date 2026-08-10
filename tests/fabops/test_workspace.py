@@ -200,6 +200,20 @@ def test_the_app_computes_nothing():
         "the app contains SQL; analysis belongs in the semantic layer")
 
 
+#: What a v2 presentation surface may not name. Declared once so the scan and
+#: the mutation that proves the scan works are literally the same expression.
+FORBIDDEN_LITERALS = (r"ETCH-\d", r"CVD-\d", r"PVD-\d", r"CMP-\d",
+                      r"LITHO-\d", r"Mobile-28", r"Logic-14",
+                      r"chamber_edge_uniformity", r"param_drift",
+                      r"particle_excursion", r"benign_offset",
+                      r"DEMO_SUSPECT_TOOL")
+
+
+def entity_hits(source: str) -> list[str]:
+    return [pattern for pattern in FORBIDDEN_LITERALS
+            if re.search(pattern, source)]
+
+
 def test_the_app_names_no_entity_and_no_mechanism():
     """The audited dashboard's defect, in the one place it would return.
 
@@ -208,12 +222,7 @@ def test_the_app_names_no_entity_and_no_mechanism():
     candidate is highlighted here it is because the engine ranked it.
     """
     source = APP.read_text(encoding="utf-8")
-    forbidden = [r"ETCH-\d", r"CVD-\d", r"PVD-\d", r"CMP-\d", r"LITHO-\d",
-                 r"Mobile-28", r"Logic-14", r"chamber_edge_uniformity",
-                 r"param_drift", r"particle_excursion", r"benign_offset",
-                 r"DEMO_SUSPECT_TOOL"]
-    for pattern in forbidden:
-        assert not re.search(pattern, source), pattern
+    assert not entity_hits(source)
 
     tree = ast.parse(source)
     imported = {node.module for node in ast.walk(tree)
@@ -246,6 +255,25 @@ def _code_only(path: Path) -> str:
               if isinstance(node, ast.Constant)
               and isinstance(node.value, str) and id(node) not in docstrings]
     return "\n".join(parts)
+
+
+def test_the_entity_scan_fires_on_an_app_that_names_one():
+    """A guard that cannot fail is not a guard.
+
+    The audited dashboard's own constant is appended to a copy of the app and
+    run through the *same function* the real file passes, so the two cannot
+    diverge into a strict scan and a lenient mutation.
+    """
+    poisoned = APP.read_text(encoding="utf-8") + '\nSUSPECT = "ETCH-02"\n'
+    assert entity_hits(poisoned) == [r"ETCH-\d"]
+
+
+def test_the_sql_scan_fires_on_an_app_that_queries():
+    poisoned = APP.read_text(encoding="utf-8") + (
+        '\nrows = st.connection("x").query("SELECT 1 FROM runs")\n')
+    assert re.search(r"\bSELECT\b", poisoned, re.I)
+    assert not re.search(r"\bSELECT\b",
+                         APP.read_text(encoding="utf-8"), re.I)
 
 
 def test_the_app_has_no_default_dataset():

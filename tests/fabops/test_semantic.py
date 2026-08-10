@@ -62,6 +62,31 @@ def test_the_connection_cannot_write(layer):
         layer.execute("UPDATE wafer_yield SET yield_pct = 0")
 
 
+def test_a_persistent_view_would_be_refused(layer):
+    """The mutation that shows *why* the views are TEMP views.
+
+    A `CREATE VIEW` writes into `sqlite_master` — into the file whose SHA-256
+    the manifest records and whose content the benchmark scores. On this
+    connection it cannot even be attempted, which is what makes the byte
+    identity above a property of the design rather than of the SQL happening to
+    say TEMP today.
+    """
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        layer.execute("CREATE VIEW v_persistent AS SELECT 1 AS x")
+    layer.execute("CREATE TEMP VIEW v_temporary AS SELECT 1 AS x")
+    assert layer.execute("SELECT x FROM v_temporary").fetchone() == (1,)
+
+
+def test_every_view_in_the_layer_file_is_declared_temp():
+    """The static half: a view added later without TEMP would write into the
+    dataset the first time anybody opened it read-write."""
+    from fabops.semantic import VIEWS, layer_sql
+
+    sql = layer_sql()
+    assert sql.upper().count("CREATE VIEW") == 0
+    assert sql.upper().count("CREATE TEMP VIEW") == len(VIEWS)
+
+
 def test_the_layer_refuses_a_database_that_is_not_schema_v2(tmp_path):
     legacy = REPO / "data" / "fab.db"
     if not legacy.exists():                                # pragma: no cover
