@@ -12,7 +12,11 @@
 
 **Diagnosis is authorized as of ADR-029** and its acceptance is *not* part of A1-A11: this document grades FabSim and schema v2. The engine's own criteria — the eight anti-leakage checks, truth invariance and its mirror, determinism, and the permutation-null validity criterion — live in `DIAGNOSIS_CONTRACT.md` §5.1 and §6, and are executed by `tests/fabops/`. A1-A11 are untouched by the engine's existence.
 
-**Nothing was made green by relaxation, and nothing became PASS.** A6 stays PARTIAL; A7 and A9 became PARTIAL because their checks stopped measuring things a correct simulator fails. The matrix now has no blocked criterion — a statement about the criteria having been repaired, not about the simulator having improved. Every PARTIAL names genuinely unrun work: a CI reference-image job (A1), manual reviews (A9), checks inapplicable to a null (A7), and halves delegated to other criteria (A3, A8, A11).
+**Nothing was made green by relaxation.** A6 stays PARTIAL; A7 and A9 became PARTIAL because their checks stopped measuring things a correct simulator fails. The matrix has no blocked criterion — a statement about the criteria having been repaired, not about the simulator having improved.
+
+**A9 reached PASS at the Final Acceptance gate (ADR-030), and it is the one status change in this matrix's history that needs its provenance stated with it.** Its last unrun item — the manual wafer-map review — was **performed**, found not met, measured to be *flat across the entire severity ladder* (×1.052 / ×1.060 / ×1.059), traced to the magnitude the audited direct-label term produced, and retired as a gate on the ADR-028 pattern. What made that a repair rather than a relaxation is the other half of the same measurement: the two items A9 still gates on had never had a reference distribution either, and computing it on twelve fault-free worlds showed both of them discriminate (rank 1 of 7 at z = +2.344 and +2.650 on the faulted world; 2/12 and 0/12 on the nulls). A9 passes on items that separate a faulted world from a fault-free one, and every retired item is still printed in its evidence.
+
+Every remaining PARTIAL names genuinely unrun work: a CI reference-image job (A1), checks inapplicable to a null (A7), a criterion whose wording assumes a lag the physics does not have (A5), a measured shortfall on the declared channels (A6), and halves delegated to other criteria (A3, A8, A11).
 
 | | Status | What is outstanding |
 |---|---|---|
@@ -24,7 +28,7 @@
 | A6 | PARTIAL | the difficulty axis exists at both ends - realized severity rises and subtle stays inside benign variation - but at moderate the planted chamber clears the declared level on none of the three channels A6 names as evidence (p = 0.076 / 0.105 / 0.338); it clears on alarms, which corroborates (ADR-027) |
 | A7 | PARTIAL | L1-L11 green where applicable, including both halves of L7; 18 checks are inapplicable to their dataset, which is why this is not PASS |
 | A8 | PARTIAL | chamber usage and etch independence hold; recipe and benign-offset items belong to A4 and 3C |
-| A9 | PARTIAL | the declared chain reaches the die plane, the edge-ring signature leads and the fault window carries maintenance; cohort yield is reported and not gating (a fault-free world is "worst on yield" one time in three - ADR-028) and the 4-10 band is historical reference (ADR-027); the wafer-map review is manual and unrun, so A9 **cannot be PASS** |
+| A9 | **PASS** | the declared chain reaches the die plane, the edge-ring signature leads (z = +2.344 against 2/12 fault-free worlds) and the fault window carries maintenance. Three items are reported and none gates: the 4-10 band (ADR-027), the cohort-yield ranking (ADR-028) and the wafer-map review (ADR-030 - **run** at the Final Acceptance gate, not met, and flat across the severity ladder) |
 | A10 | **PASS** | - |
 | A11 | PARTIAL | the legacy artifacts are present and still schema v1; the 27-test behavioural half is the test suite's |
 
@@ -220,16 +224,24 @@ The classification is therefore **(D) an acceptance-interpretation issue compoun
 
 **What gates the downstream half instead.** The demo's *declared* `causal_chain` must still reach `die_bins` and `wafer_yield` (`fabeval.acceptance.DEMO_CHAIN_ENDPOINTS`). That chain is derived from the world's own sensitivity maps, so it cannot disagree with the physics, and severing the die plane fails A9 loudly. The *magnitude* stays gated where it can actually be measured — counterfactual subtraction in `tests/fabsim/test_die.py`, which asserts the mechanism reached die at all, reached only exposed wafers, and rises monotonically with severity by at least 1.2× — because that is the only instrument that can see an 0.058-point effect.
 
+*As reviewed (the Final Acceptance gate), the manual item was **run**, found not met, measured to be unreachable, and retired as a gate — and A9 becomes **PASS** on what remains.* **ADR-030**; three results.
+
+**The review happened; it did not pass.** Four cohorts of scenario B at seed 42, GATE layer, geometry only: the planted chamber after onset, the same chamber before onset, the other chambers in the same window, and the same chamber on a fault-free world. Their radial profiles overlap. Edge-zone shares are 0.4087 / 0.4155 / 0.3905 / 0.3984 — the faulted cohort is *below* its own pre-onset window — and the excess is ≈25 edge defects on a 1500-defect cohort.
+
+**It is not a severity problem.** The geometric lift over peers is ×1.052 / ×1.060 / ×1.059 at subtle / moderate / obvious: **flat**, while the latent moves 1.61 → 3.22 → 4.00 σ. No rung of the declared ladder makes a wafer map show anything, so the item was not waiting for a louder fault. The legacy figure it was written against sits at ×1.78 on the same measure (and ×3.86 on an `EDGE_RING` class schema v2 abolished as leakage), which is the magnitude the audited `−0.08 if bad_tool` term produced — so the item asks the successor to reproduce the defect ADR-004 exists to remove.
+
+**What makes retiring it a repair rather than a relaxation.** The two items A9 still gates on had never had a reference distribution computed either. It has been, on twelve fault-free worlds, and both pass it: edge-zone defect share reaches rank 1 of 7 at z = +2.344 on the faulted world against 2/12 on the nulls (chance 1/7, mean z −0.322), and edge CD reaches rank 1 of 7 at z = +2.650 against 0/12. **Unlike the cohort-yield ranking ADR-028 retired, these separate a faulted world from a fault-free one.** A9 therefore passes on items that discriminate, with all three retired findings still printed in its evidence.
+
 `demo_edge_uniformity` (scenario B, default seed) reproduces a **statistically equivalent** ETCH-02 story, defined as this checklist — not exact numbers:
 
 *Gating:*
 - the declared causal chain still reaches the die plane and wafer yield *(ADR-028; the successor to the yield item)*;
-- elevated edge-ring share and edge-zone defect concentration on the affected chamber's wafers;
+- elevated edge-ring share and edge-zone defect concentration on the affected chamber's wafers — **measured against a reference distribution for the first time (ADR-030): rank 1 of 7 at z = +2.344 on the faulted world, against 2/12 fault-free worlds (chance 1/7) at a mean z of −0.322. Edge CD deviation likewise: rank 1 of 7 at z = +2.650, and 0/12 on the null**;
 - unscheduled maintenance present on the affected tool within the fault window;
-- wafer maps visibly show the edge-ring signature (manual review of regenerated figures) — **unrun, so A9 cannot be PASS**;
-- the story is recoverable **only** through mediated channels (A7 holds on this dataset).
+- the story is recoverable **only** through mediated channels (A7 holds on this dataset — L1–L11 green on it, 1 inapplicable).
 
 *Reported, never gating:*
+- ~~wafer maps visibly show the edge-ring signature (manual review of regenerated figures)~~ *(**run at the Final Acceptance gate and retired as a gate by ADR-030.** The review was performed, not waived, and the item is not met on its literal wording: the planted chamber's geometric edge-zone lift over its peers is ×1.052 / ×1.060 / ×1.059 at subtle / moderate / obvious — **flat across the whole severity ladder**, so no rung makes a wafer map show anything. Four cohorts — faulted, the same chamber pre-onset, other chambers in the same window, and the same chamber on a fault-free world — have overlapping radial profiles, and the excess is ≈25 edge defects on a 1500-defect cohort. The legacy figure the wording was written against reaches ×1.78 on the same geometric measure and ×3.86 on an `EDGE_RING` class schema v2 abolished as leakage (ADR-019 §4); that magnitude is what the audited `−0.08 if bad_tool` term produced. `fabeval.acceptance.WAFER_MAP_LADDER_LIFT` and `WAFER_MAP_NULL_RANK1` keep the numbers and `check_a9` reports them at every verdict; a test pins both directions, so retiring the item cannot become deleting the finding and cannot quietly become enforcing it again)*;
 - ~~the affected chamber's tool is worst of the three etch tools on cohort yield~~ *(**retired as a gate by ADR-028** — satisfied by a fault-free world one time in three. The tool standing, the cohort delta and the between-tool spread are printed in the evidence at every verdict)*;
 - ~~deficit in 4–10 pts~~ *(**retired as binding by ADR-027 §6 and preserved as a historical reference.** It is the magnitude of the audited `−0.08 if bad_tool` term: the v1 deficit it was read from was 8.0 points of direct label effect and ~3.7 points mediated, so the band's own floor sits above what the legacy system produced through physics. `fabeval.acceptance.LEGACY_COHORT_BAND` keeps the number and the check reports it; nothing gates on it)*.
 

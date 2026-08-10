@@ -161,7 +161,7 @@ def test_the_criteria_the_library_settles_are_green(report, criterion):
 
 
 @pytest.mark.parametrize("criterion",
-                         ["A1", "A3", "A5", "A6", "A7", "A8", "A9", "A11"])
+                         ["A1", "A3", "A5", "A6", "A7", "A8", "A11"])
 def test_the_partly_testable_criteria_are_reported_as_partial(report,
                                                               criterion):
     """Not PASS, and not BLOCKED either. Each of these has a half this gate
@@ -197,47 +197,55 @@ def test_a7_reports_the_null_calibration_it_now_measures(report):
         calibration[0]
 
 
-def test_a9_is_partial_and_can_never_be_pass_while_a_human_item_is_unrun(
-        report):
+def test_a9_passes_on_the_items_that_separate_a_fault_from_a_null(report):
     """A9 is *statistical equivalence*, never a replay of the legacy numbers
     (ADR-010).
 
-    Two items stopped gating, both for the same kind of reason. ADR-027
-    retired the 4-10 point band, a number traced to the audited v1's direct
-    label term. ADR-028 retired the cohort-yield *ranking*: on twelve
-    fault-free worlds each etch tool is 'worst on cohort yield' about a third
-    of the time, so it is satisfied by chance on a world with no fault in it.
+    Three items stopped gating, all for the same kind of reason: each asked
+    the demo to reproduce a magnitude the audited v1 produced by writing the
+    answer in. ADR-027 retired the 4-10 point band. ADR-028 retired the
+    cohort-yield *ranking* - each etch tool is 'worst on yield' about a third
+    of the time on a world with no fault in it. ADR-030 retired the manual
+    wafer-map item, having *run* it: the geometric edge-zone lift is flat
+    across the whole severity ladder, so no rung makes the map show anything,
+    while the legacy figure it was written against sits at x1.78.
 
-    What remains gating is the declared causal chain reaching the die plane,
-    the edge-ring signature, and maintenance inside the window. A9 is PARTIAL
-    and **cannot be PASS**, because the wafer-map review is a human item.
+    What gates is what discriminates - the declared chain reaching the die
+    plane, the edge-ring signature, maintenance inside the window - and unlike
+    the retired items, those were measured against twelve fault-free worlds
+    before this criterion was allowed to pass on them.
     """
     verdict = report.verdict("A9")
-    assert verdict.status == PARTIAL
-    assert verdict.status != PASS
-    assert "wafer-map review is manual" in verdict.detail
-    assert any("wafer-map" in line for line in verdict.evidence)
-    # Both retired items are still reported, neither is deleted.
+    assert verdict.status == PASS, verdict.detail
+    assert "3/3 gating items met" in verdict.detail
+    # A PASS earned by retiring an item must still carry that item's finding.
+    assert any("wafer-map review: RUN and not met" in line
+               for line in verdict.evidence), verdict.evidence
     assert any("historical reference" in line for line in verdict.evidence)
     assert any("worst etch tool" in line for line in verdict.evidence)
     assert any("reported, not gating" in line for line in verdict.evidence)
 
 
 def test_nothing_is_blocked_and_nothing_became_pass_by_relaxation(report):
-    """The matrix's shape after three gates of criterion repair.
+    """The matrix's shape after four gates of criterion repair.
 
     A7 left the blocked list in ADR-027 when its check stopped measuring an
-    order statistic; A9 leaves it in ADR-028 for the same class of reason.
-    Neither became PASS — and that is the property worth pinning, because a
-    criterion may only reach PASS by being earned. Six criteria remain PARTIAL
-    on genuinely unrun work: CI jobs, manual reviews, and checks inapplicable
-    to a null.
+    order statistic; A9 left it in ADR-028 for the same class of reason and
+    reached PASS in ADR-030, when the last of its legacy-magnitude items was
+    run, found flat across the severity ladder, and retired — while the items
+    that *do* separate a faulted world from a fault-free one were measured
+    against twelve of the latter first.
+
+    That is the property worth pinning: a criterion may reach PASS only by
+    being earned on items that discriminate, and A9's evidence must still
+    carry all three retired findings. The rest remain PARTIAL on genuinely
+    unrun work — CI jobs and checks inapplicable to a null.
     """
     assert report.blocked == ()
     passing = {v.criterion for v in report.verdicts if v.status == PASS}
-    assert passing == {"A2", "A4", "A10"}, passing
+    assert passing == {"A2", "A4", "A9", "A10"}, passing
     partial = {v.criterion for v in report.verdicts if v.status == PARTIAL}
-    assert partial == {"A1", "A3", "A5", "A6", "A7", "A8", "A9", "A11"}, partial
+    assert partial == {"A1", "A3", "A5", "A6", "A7", "A8", "A11"}, partial
 
 
 # ------------------------------------------------------- scenario behaviour
@@ -453,10 +461,10 @@ def test_a9_blocks_if_the_chain_stops_reaching_the_die_plane(built):
     lives in `tests/fabsim/test_die.py`, by counterfactual subtraction, which
     is the only instrument that can see an 0.058-point effect.
 
-    This is what makes today's PARTIAL a measurement rather than a stub.
+    This is what makes today's PASS a measurement rather than a stub.
     """
     demo = primary(built, DEMO_SCENARIO)
-    assert check_a9(demo).status == PARTIAL
+    assert check_a9(demo).status == PASS
 
     severed = copy.deepcopy(demo.truth)
     severed["events"][0]["causal_chain"] = [
@@ -491,25 +499,36 @@ def test_a9_blocks_if_the_demo_loses_its_edge_ring_story(built):
     assert "does not tell its story" in verdict.detail
 
 
-def test_a9_reports_both_retired_yield_items_and_enforces_neither(built):
-    """The band (ADR-027) and the ranking (ADR-028), preserved not deleted.
+def test_a9_reports_all_three_retired_items_and_enforces_none(built):
+    """The band (ADR-027), the ranking (ADR-028) and the wafer map (ADR-030).
 
-    Both are pinned in both directions: each number is still in the evidence,
-    and neither decides the verdict. A future edit that quietly deletes one,
-    or one that quietly starts gating on it again, breaks this.
+    All three are pinned in both directions: each finding is still in the
+    evidence, and none decides the verdict. A future edit that quietly deletes
+    one, or one that quietly starts gating on it again, breaks this.
     """
-    from fabeval.acceptance import LEGACY_COHORT_BAND
+    from fabeval.acceptance import (LEGACY_COHORT_BAND, WAFER_MAP_LADDER_LIFT,
+                                    WAFER_MAP_NULL_RANK1)
 
     assert LEGACY_COHORT_BAND == (4.0, 10.0)
+    assert WAFER_MAP_NULL_RANK1 == (2, 12)
+    # Flat across the ladder is the whole finding: if a future world made the
+    # signature grow with severity, retiring the item would need re-arguing.
+    assert max(WAFER_MAP_LADDER_LIFT) - min(WAFER_MAP_LADDER_LIFT) < 0.02, \
+        WAFER_MAP_LADDER_LIFT
+    assert max(WAFER_MAP_LADDER_LIFT) < 1.10, WAFER_MAP_LADDER_LIFT
+
     verdict = check_a9(primary(built, DEMO_SCENARIO))
 
     band = [line for line in verdict.evidence if "4.0-10.0" in line]
     assert band and "not" in band[0] and "enforced" in band[0], verdict.evidence
     ranking = [line for line in verdict.evidence if "worst etch tool" in line]
     assert ranking and "not gating" in ranking[0], verdict.evidence
+    wafer = [line for line in verdict.evidence if "wafer-map review" in line]
+    assert wafer and "not gating" in wafer[0], verdict.evidence
+    assert "RUN and not met" in wafer[0], wafer[0]
 
-    # Neither retired item decides the verdict: the demo's affected tool is
-    # *not* the worst on cohort yield at this seed, and A9 is PARTIAL anyway.
-    assert verdict.status == PARTIAL
+    # None of the three decides the verdict. The demo's affected tool is *not*
+    # the worst on cohort yield at this seed, and A9 passes regardless.
+    assert verdict.status == PASS
     assert "4-10" not in verdict.detail
     assert "worst etch tool" not in verdict.detail

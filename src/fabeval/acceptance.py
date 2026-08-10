@@ -5,9 +5,15 @@ One function per criterion, each returning a `Verdict` of `PASS`, `PARTIAL`
 or `BLOCKED` with the reason attached. Three statuses rather than two because
 the honest answer for several criteria is neither: A2's Jaccard bound is
 checkable and its cohort-delta half needs more seeds than a gate should
-build; A9's checklist ends in a manual wafer-map review that no function can
-perform. A criterion that is *partly* tested is reported as partly tested —
-calling it PASS would make the matrix a worse instrument than no matrix.
+build; A1's fourth check is a byte compare on a pinned CI image that no local
+run can stand in for. A criterion that is *partly* tested is reported as
+partly tested — calling it PASS would make the matrix a worse instrument than
+no matrix.
+
+A9's checklist used to end in a manual wafer-map review that no function could
+perform, which is why it appeared in this list. That review was **run** at the
+Final Acceptance gate and the item retired (ADR-030); what replaced it is not
+an assumption but a measurement, reported at every verdict.
 
 Where the repository already implements a criterion, this calls it rather
 than restating it: A4 runs `fabsim.selftest.check_observable`, the emitter's
@@ -43,6 +49,8 @@ __all__ = [
     "LEGACY_COHORT_BAND",
     "PARTIAL",
     "PASS",
+    "WAFER_MAP_LADDER_LIFT",
+    "WAFER_MAP_NULL_RANK1",
     "Verdict",
     "arc_ordering",
     "check_a1", "check_a2", "check_a3", "check_a4", "check_a5",
@@ -587,13 +595,28 @@ LEGACY_COHORT_BAND = (4.0, 10.0)
 #: 0.058-point effect.
 DEMO_CHAIN_ENDPOINTS = ("die_bins", "wafer_yield")
 
+#: The measured geometric edge-zone lift of the planted chamber over its peers
+#: at subtle / moderate / obvious (ADR-030). Flat: no rung of the ladder makes
+#: the signature visible on a wafer map, which is why the manual item was
+#: retired as a gate rather than left waiting for a reviewer. Kept as a number
+#: so that retiring it cannot quietly become deleting the finding.
+WAFER_MAP_LADDER_LIFT = (1.052, 1.060, 1.059)
+
+#: How often the planted chamber leads on edge-zone defect share on a world
+#: with no fault in it, over twelve fault-free worlds (ADR-030). Chance for one
+#: of seven chambers is 0.143, so 2/12 is chance — and that is what makes the
+#: *faulted* world's +2.344 a signal rather than a coincidence.
+WAFER_MAP_NULL_RANK1 = (2, 12)
+
 
 def check_a9(demo: Any) -> Verdict:
     """Demo continuity — the qualitative checklist, scored honestly.
 
     A9 is *statistical equivalence*, never a replay of the legacy numbers
-    (ADR-010). It ends in a manual wafer-map review, so a criterion with that
-    item unrun is not PASS, whatever the machine-checkable ones say.
+    (ADR-010). It used to end in a manual wafer-map review, which is why it
+    could not be PASS whatever the machine-checkable items said; that review
+    was run at the Final Acceptance gate and the item retired (see ADR-030
+    below), so what decides this verdict is now entirely measurable.
 
     **What ADR-027 changed.** The cohort-yield *magnitude* stopped blocking:
     `LEGACY_COHORT_BAND` is reported as historical context because it is the
@@ -615,6 +638,29 @@ def check_a9(demo: Any) -> Verdict:
     is not is the channel this criterion attributes through. What gates the
     downstream half instead is `DEMO_CHAIN_ENDPOINTS` — the declared chain must
     still reach the die plane and wafer yield.
+
+    **What ADR-030 changed.** The manual wafer-map item stopped gating, and it
+    is the third item of this criterion to go for the same reason. The review
+    was *run* rather than waived: the planted chamber's geometric edge-zone
+    lift is `WAFER_MAP_LADDER_LIFT` — ×1.052 / ×1.060 / ×1.059 at subtle /
+    moderate / obvious — so it is **flat across the whole severity ladder** and
+    no rung makes a wafer map show anything. The legacy figure the wording was
+    written against reaches ×1.78 on the same geometric measure (and ×3.86 on
+    an `EDGE_RING` *class* that schema v2 abolished as leakage, ADR-019 §4), and
+    that magnitude is what the audited direct-label term produced. Requiring it
+    back is requiring the defect ADR-004 exists to abolish.
+
+    **What did not change, and is the reason this is not a relaxation.** The
+    signature is real and it discriminates — it is simply not *visible*. On the
+    faulted world the planted chamber reaches a leave-one-out z of +2.344 on
+    edge-zone defect share and +2.650 on edge CD, both rank 1 of 7; across
+    twelve fault-free worlds it leads on defects `WAFER_MAP_NULL_RANK1` of the
+    time — 2/12, against chance at 1/7 — with a mean z of −0.322, and it leads
+    on edge CD on none of them. That reference distribution had never been
+    computed for these two items; it has been now, and unlike the yield ranking
+    ADR-028 retired, both of them pass it. So the items that gate this
+    criterion are the ones that separate a faulted world from a fault-free one,
+    and the item that was retired is the one that could not.
     """
     truth = demo.truth
     if not truth["events"]:
@@ -655,8 +701,19 @@ def check_a9(demo: Any) -> Verdict:
         f"declared causal chain: {list(chain)}",
         f"edge-ring share rank of {label}: {edge_rank}/{len(shares)}",
         f"unscheduled maintenance in the window: {repaired}",
-        "wafer-map review: not run (manual item)",
-        "-- reported, not gating (ADR-027, ADR-028) --",
+        "-- reported, not gating (ADR-027, ADR-028, ADR-030) --",
+        f"wafer-map review: RUN and not met on its literal wording. The "
+        f"planted chamber's geometric edge-zone lift over its peers is "
+        f"x{WAFER_MAP_LADDER_LIFT[0]:.3f} / x{WAFER_MAP_LADDER_LIFT[1]:.3f} / "
+        f"x{WAFER_MAP_LADDER_LIFT[2]:.3f} at subtle / moderate / obvious - "
+        f"flat across the ladder, so no severity makes it visible. The legacy "
+        f"figure reaches x1.78 on the same measure, which is the magnitude the "
+        f"audited direct-label term produced - not gating (ADR-030)",
+        f"...but the signature discriminates, which the visual item never "
+        f"tested: the planted chamber leads on edge-zone defect share on "
+        f"{WAFER_MAP_NULL_RANK1[0]}/{WAFER_MAP_NULL_RANK1[1]} fault-free "
+        f"worlds (chance 1/7) at a mean z of -0.322, against +2.344 on this "
+        f"faulted world",
         f"affected cohort within-product yield delta {-deficit:+.2f} pts; the "
         f"legacy band {low}-{high} is historical reference and is not "
         f"enforced",
@@ -683,16 +740,20 @@ def check_a9(demo: Any) -> Verdict:
             f"the demo does not tell its story: edge-ring share rank "
             f"{edge_rank} (want 1), unscheduled maintenance in the window "
             f"{repaired} (want True)", tuple(evidence))
-    return Verdict("A9", PARTIAL,
-                   f"{sum(met)}/3 machine-checkable items met - the declared "
-                   "chain reaches the die plane and yield, the affected "
-                   "chamber leads on edge-ring share, and the fault window "
-                   "carries unscheduled maintenance. Cohort yield is reported "
-                   "and not gating (ADR-028): it is satisfied by a fault-free "
-                   f"world a third of the time. Legacy band "
-                   f"{'met' if in_band else 'not met'}, reported only. The "
-                   "wafer-map review is manual and has not been run, so this "
-                   "criterion cannot be PASS.", tuple(evidence))
+    return Verdict("A9", PASS,
+                   f"{sum(met)}/3 gating items met - the declared chain "
+                   "reaches the die plane and yield, the affected chamber "
+                   "leads on edge-ring share, and the fault window carries "
+                   "unscheduled maintenance. Three items are reported and "
+                   "none gates: the legacy band "
+                   f"{'met' if in_band else 'not met'} (ADR-027), cohort-yield "
+                   "ranking (ADR-028, satisfied by a fault-free world a third "
+                   "of the time), and the wafer-map review (ADR-030, run and "
+                   "not met - the lift is flat across the severity ladder, and "
+                   "the magnitude it asks for is the audited direct-label "
+                   "term's). What remains is what separates a faulted world "
+                   "from a fault-free one, measured against twelve of the "
+                   "latter.", tuple(evidence))
 
 
 # ------------------------------------------------------------------- A10
