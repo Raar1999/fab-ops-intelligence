@@ -167,8 +167,30 @@ STATISTICS: Mapping[str, Statistic] = MappingProxyType({
 #: convergence exists to detect. An abstention is a claim, and a mis-calibrated
 #: claim is worse than a weak one, so the calibrated statistic ships and the
 #: powerful one stays registered beside it with its cost on the record.
-#: `trend_contrast` is registered and unmeasured. The >=10-scenario benchmark
-#: is what should choose among them, from a table rather than from folklore.
+#: **Re-measured at the Phase 6 gate against the >=10-scenario benchmark, which
+#: is the instrument ADR-029 §5 said would have to choose (ADR-031).** The
+#: default did not move; what moved is that it is now chosen from a table that
+#: includes the member which had never been measured at all.
+#:
+#: `trend_contrast` was registered and unmeasured, and it is the one the
+#: benchmark disqualified: on 200 fault-free worlds it reads .025/.090/.135/.255
+#: at the shipped anchor — hot at every declared level, and hot on three of the
+#: four anchor grids tried. It also fires on 14 of 21 development faults and on
+#: 2 of the 3 fault-free development worlds, which is why leaving it unmeasured
+#: was a real risk rather than an omission: it is by far the most *powerful*
+#: member of the registry and it states a level it does not keep. It stays
+#: registered, now with a measured reason instead of none.
+#:
+#: `standardized_step` is the interesting case and the trade is unchanged in
+#: shape. It ranks far better than the default — 9 of 21 development faults in
+#: the top three against 3, mean reciprocal rank 0.328 against 0.148 — and its
+#: null sits above nominal at all four levels (.010/.075/.125/.240 on 200
+#: worlds) where the default sits at or very near nominal. ADR-029's ordering
+#: decides it: an abstention is a claim, a mis-calibrated claim is worse than a
+#: weak one. The ranking numbers are recorded because a later gate optimizing
+#: for a human reading a ranked list — rather than for an automated abstention —
+#: would be choosing under a different priority and should not have to
+#: re-measure this. On the evidence here that gate would have a real case.
 DEFAULT_STATISTIC = "own_scale_step"
 
 

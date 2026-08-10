@@ -167,3 +167,56 @@ That gate ran and chose. **ADR-027** replaces L7's undeclared constant with the 
 2. Tuning iterations that touch world-template constants re-run the full suite on all library scenarios (guards against fitting constants to one demo — risk R6).
 3. The words used in observable free-text (maintenance descriptions, alarm messages) come from fab-wide template lists; scenario configs cannot add free text to observable surfaces.
 4. Documentation of library scenarios (which answer belongs to which id) lives in `scenarios/README.md` and truth files only — never in READMEs of dataset directories.
+
+## 3.9 The suite over twelve scenarios (the Phase 6 gate)
+
+The library grew from five members to twelve (ADR-031). L1–L11 now run over all
+of them and there are **no failures**; the Phase 1 acceptance matrix A1–A11
+deliberately does not follow, because those criteria were ratified against the
+five that existed then and scoring them on later configurations would let a
+Phase 6 config move a settled verdict. Leakage is the opposite case: L1–L11
+assert properties of a *dataset*, which hold or fail whatever phase produced
+the configuration.
+
+**Process rule 1 held, and it cost two expectations.** Every new scenario
+shipped with its L-suite expectation, written from the severity convention the
+Phase 1 five already follow rather than from what the scenario was measured to
+produce. Two of the seven then failed on first measurement, and both were
+corrected the way ADR-024 §5 established — the channel is marked
+**corroborating**, measured and reported and unable to fail the scenario alone
+— for two different reasons that are worth keeping apart:
+
+- **`multi_fault`'s etch event: stochastic.** `edge_uniformity` reaches the
+  alarm plane only through `endpoint_time_s` (sensitivity 0.30) and
+  `chamber_pressure_mtorr` (0.05), so whether a planted chamber out-alarms its
+  peers depends on where its own benign offset sits. Measured on the same
+  mechanism at the same severity: ETCH-02/B reaches +4.34 and ETCH-03/B reaches
+  −0.31. That is the spread rule F11 requires, not a defect.
+- **`intermittent_particle_load`: structural, and the stronger reason.** Every
+  reference statistic is a leave-one-out standing against same-role peers and
+  `zscore` refuses fewer than two of them. CMP-01 is the only CMP tool in this
+  world and has two chambers, so its chambers have exactly one peer and **no
+  reference query can produce a number for them** — the measured `z = +0.00` is
+  the refusal, not a result. Requiring a channel that cannot exist would be
+  requiring the world to have a different equipment roster.
+
+The second is asserted positively rather than left as a silence.
+`too_few_peers_to_rank` checks that the planted chamber's tool family really
+does have fewer than three chambers, so a world that later adds a third fails
+the check and the expectation has to be rewritten rather than inherited. The
+same arithmetic bounds the diagnosis engine — 13 of this world's 24 chambers
+are `not_assessable` in every dataset it can build — and that is recorded in
+`DIAGNOSIS_CONTRACT.md` §8.2.
+
+**A determinism defect closed in the analysis plane, and one measured and
+ruled out in the legacy one.** Every multi-row query in `fabops.diagnosis` and
+`fabeval` now states a total order on a primary key. It is not tidiness: SQL
+lets a database return rows in any order unless the query says otherwise, both
+packages fold those rows into floats, and the decision plane turns floats into
+ranks. Reversing the row order on one dataset moved 383 peer-differenced series
+while leaving the report intact — real, latent, and one near-tie away from
+deciding which chamber a fab was told to inspect. The correction changed no
+value on the library (zero differing floats across five scenarios). The legacy
+v1 surface was measured rather than assumed: its committed database was
+physically rewritten in reverse row order and the narrated story came out
+identical.

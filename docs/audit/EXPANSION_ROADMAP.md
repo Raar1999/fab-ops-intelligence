@@ -72,6 +72,16 @@ Rule for every phase: the existing demo (`ETCH-02` story, README, notebook) **mu
 - **Acceptance:** one command emits the results table; README's future benchmark section is generated from it, never hand-written.
 - **Value:** the project's differentiator — a diagnostic claim with a measured error rate is what separates engineering from storytelling.
 
+> **Executed 2026-08-10; recorded in ADR-031. Annotated rather than rewritten, per ADR-001.** Three notes on what the phase turned out to be.
+>
+> **The harness was not the missing piece; the population was.** `src/fabeval/` has scored datasets since ADR-024 and has had a diagnosis adapter since ADR-029, so "build the runner" was largely already done. What blocked every claim was that the library had five members and all of them had chosen the method. Phase 6's substance is therefore the *library* (five → twelve, with a declared development/held-out split disjoint on scenarios as well as seeds) and the three decisions that library was the instrument for: `DIAGNOSIS_CONTRACT.md` §8.1's anchor rule, per-candidate statistic and level. `fabeval.benchmark` is the new module and it is the smallest of the deliverables.
+>
+> **"≥10 scenarios: per fault class × severity" understates what diversity has to mean.** Severity is one axis and it is not the binding one. The axis that was actually blocking a decision is **onset position**: every Phase 1 fault begins at day 30–40 of 84, which ADR-029 §2 flagged as "a benchmark artefact [that] must not become architecture", and no measurement could distinguish one anchor rule from another until the library contained a fault at day 12 and one at day 63. `fabeval.benchmark.diversity` measures eight axes and a test asserts each one varies, so the next scenario added cannot quietly be a twelfth copy of the same shape.
+>
+> **The CI job in the modules line stays unbuilt, and that is an owner decision rather than an omission.** GitHub Actions is unavailable to this repository (Final Acceptance D3, D6); the acceptance matrix records the CI-dependent verification as INFRASTRUCTURE-BLOCKED / NON-GATING and outstanding. The full suite runs locally and green.
+>
+> **The A1–A11 acceptance matrix deliberately still scores the Phase 1 five, not the twelve.** Those criteria were written about, and ratified against, the five members that existed then; pointing them at scenarios designed afterwards would let a Phase 6 configuration retroactively move a settled verdict. It is not hypothetical — A5 requires ≥30% of the horizon as baseline before onset, and the early-onset scenario sits at 14% *on purpose*. The anti-leakage suite L1–L11 is the opposite case and runs on all twelve, because those assert properties of a dataset rather than of a phase.
+
 ## Phase 7 — Impact, containment, recommendations (P1/P2, small)
 - **Objective:** generalize the audited step-7/8 queries; templated actions.
 - **Modules:** `src/fabops/impact/{loss,exposure}.py` (mix-aware benchmark), `src/fabops/actions/recommend.py` + local knowledge table (data file per BOUNDARY doc §3); investigation-artifact JSON writer (`fabops.investigation/v1`).

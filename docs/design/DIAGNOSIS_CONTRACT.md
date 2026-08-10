@@ -154,14 +154,21 @@ against a specific scenario's answer. `fabeval` gains one adapter that reads
 an `Investigation` and joins it to truth on `dataset_id`; that adapter is
 evaluator code, not engine code.
 
-**No benchmark number may be claimed yet, and that is a decision rather than
-an omission (ADR-029 §5).** Nothing measured across four gates distinguishes
-the candidate statistics at the size of the current library — the anchor
-comparison's paired tests sit at p = 0.22–0.38, and the spread across random
-anchors (8 to 14 of 25) is wider than the effect being estimated. Until the
-scenario library reaches `EXPANSION_ROADMAP` Phase 6's ≥ 10 members with a
-declared development/held-out split, `fabeval` reports diagnosis metrics as
-*measured on a named population* and never as a capability claim.
+**No benchmark number could be claimed until Phase 6, and that was a decision
+rather than an omission (ADR-029 §5).** Nothing measured across four gates
+distinguished the candidate statistics at the size of the Phase 1 library — the
+anchor comparison's paired tests sat at p = 0.22–0.38, and the spread across
+random anchors (8 to 14 of 25) was wider than the effect being estimated.
+
+*The library now meets the bar (ADR-031): twelve scenarios, a declared
+development/held-out split, and `fabeval.population.claimable` permits a claim
+only when both the count and the split are present.* **The claim it permits is
+that the engine, at its declared level, abstained on all 44 datasets of the
+twelve-scenario library, and ranked a planted entity first on 2 of 21
+development datasets and 0 of 15 held-out ones — with a false-alarm rate of 0
+on both populations.** It keeps the half of this contract about abstention
+exactly and is close to blind on the half about attribution. That is the
+capability, stated as one.
 
 ### 5.1 The abstention decision, and the null it is read against
 
@@ -373,19 +380,61 @@ deleted, so the reasoning stays attached to the outcome.
    name, inheriting that contract's versioning and its FabKG export boundary.
 5. **Where the engine lives.** *Closed.* `src/fabops/diagnosis/`.
 
-### 8.1 What remains open, and what it waits on
+### 8.1 The three that waited on the benchmark — closed (ADR-031)
 
-Three questions are open **by decision**, because the instrument that would
-settle them is a benchmark the library cannot yet supply (ADR-029 §5):
+Three questions were open **by decision**, because the instrument that would
+settle them was a benchmark the library could not yet supply (ADR-029 §5):
 
 * which anchor rule `anchors` should implement;
 * which per-candidate statistic each channel should contribute;
 * what `alpha` should be for a *fab* rather than for a benchmark.
 
-All three wait on `EXPANSION_ROADMAP` Phase 6's ≥ 10-scenario library with a
-declared development/held-out split. Until then the engine ships a declared
-default for each, marked as such in code, and `fabeval` reports its numbers as
-measurements on a named population rather than as a capability claim.
+`EXPANSION_ROADMAP` Phase 6 built that library — twelve scenarios, a
+development/held-out split disjoint on scenarios as well as seeds — and all
+three were measured against it. **None of them moved**, and that is the answer
+rather than an absence of one:
+
+| | decided | measured against | what it costs |
+|---|---|---|---|
+| anchor | one declared mid-horizon fraction, `(0.50,)` | 660 fault-free worlds, three disjoint seed ranges | every multi-anchor grid tried runs 2.6× nominal at α = 0.01 (+4.1 sd) and finds 6 of 21 development faults where this finds 0 |
+| statistic | `own_scale_step` | the same population, plus the registry member that had never been measured | `trend_contrast` is the most powerful and the least calibrated; `standardized_step` ranks far better and sits above nominal at all four levels |
+| level | `ALPHA = 0.05`, the **screening** level | the same population and the 21 faulted development datasets | at the declared level the engine fires on none of them; at the fab's own 3σ action convention it fires on none either |
+
+The two decisions that look like they were left alone were each re-taken. The
+anchor was briefly changed to a three-anchor grid on a 200-world measurement
+and changed back when a 400-world population contradicted it — the record of
+that near-miss is ADR-031 §5, and its generalisable half is that **a declared
+level of 0.01 cannot be validated on any population a test suite can afford**,
+so the suite's check can fail for being small and pass for being small alike.
+
+**What is still open, and now for a stated reason rather than for want of a
+benchmark.** What `alpha` should be for a *fab* needs the relative cost of a
+missed excursion and a wasted investigation; this project has no cost model and
+inventing one to justify a number is architecture invention. The trade-off
+curve is published in `decide.py` so whoever has one need not re-measure it.
+
+### 8.2 A structural boundary on what can be attributed at all
+
+Found by the held-out run and recorded here because it is a property of the
+contract's own machinery rather than of any scenario (ADR-031 §9).
+
+Every statistic in this engine is a leave-one-out standing among
+**contemporaneous peers of the same role**, and `candidates.MIN_PEERS = 2`
+means an entity needs at least two of them — that is, **at least three chambers
+in its tool family**. In `baseline_fab_v1` that is ETCH (7 chambers) and CVD
+(4). The other **13 of 24 chambers, across six tool families, are
+`not_assessable` in every dataset this project can build.** The engine reports
+them with a reason, which is §3's `not_assessable` state working as specified,
+not a failure — but the boundary had never been quantified, and an engine that
+can only ever name a chamber in two of a fab's eight equipment families is
+describing a narrower capability than "entity attribution" suggests.
+
+It is not repaired by relaxing `MIN_PEERS`: with one peer there is no
+exchangeable population, and the permutation null of §5.1 has exactly one
+precondition. Widening a stratum to group tool families would change that
+precondition, which ADR-029 §8 deliberately *narrowed* to `tool_type` after
+measuring that a fab-wide grouping fired on 20% of fault-free worlds. Either
+would be a new gate with its own measurement.
 
 **The statistic registry, measured.** The default was chosen on **fault-free
 calibration alone**, which is the only selection criterion available to an

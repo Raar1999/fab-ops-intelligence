@@ -138,6 +138,12 @@ Assessment of the full library against Phase 1 value, with the mechanism each wo
 
 **Initial set: A, B, C, G, I** — five scenarios. This is the smallest set that covers: false-positive control (A), the continuity demo + chamber attribution (B), temporal drift (C), competing-hypothesis discipline (G), and full temporal lifecycle (I). D/E/F/H/J are library growth, not architecture.
 
+> **Grown to twelve at the Phase 6 gate (2026-08-10, ADR-031). This table is left as written — it is the Phase 1 record.** Three of the deferred members landed exactly as it predicted, on configuration alone: **D** as `late_gas_flow_step` (scenario C under `profile: step`, as the Rationale column says, and no new mechanism code), **H** as `benign_correlate`, and **J** as `multi_fault`. **E** (`post_pm_shift`) and **F** (a dedicated particle-shower scenario) remain deferred and still need no new architecture.
+>
+> Four new members have no letter here, because they answer questions this table did not anticipate. `early_particle_excursion` (day 12 of 84) and `late_gas_flow_step` (day 63) exist for **onset position**, which turned out to be the axis blocking the diagnosis engine's anchor decision — every Phase 1 fault onsets at day 30–40, and ADR-029 §2 called that "a benchmark artefact [that] must not become architecture". `tool_wide_drift` exists for **grain**: it is the only member whose correct answer is a tool rather than a chamber. `intermittent_particle_load` exists for **shape in time**: it is the only member using `profile: intermittent`, which §2.1 has declared since v1 and which no scenario had ever exercised.
+>
+> **The right way to read the "Phase 1?" column in hindsight** is that it was choosing a *minimum covering set for the architecture*, and it chose well — nothing in the expansion required a new mechanism, a schema change, a contract version or a world edit. What it could not choose was a set large enough to *select a method on*, which is a different job and is Phase 6's. `scenarios/README.md` is the current index and `fabeval.population` is the authority on which member is development and which is held out.
+
 ## 4. The five Phase 1 scenarios, specified
 
 Common world: `baseline_fab_v1` — 6 products, 1 flow (14 steps), 15 tools (3 etch tools × 2–3 chambers), recipes per product×step, 20 lots / 84 days. All five include the standing benign distractors: permanent small tool/chamber parameter offsets, the edge-slot defect effect, and product-dependent baseline defectivity.

@@ -31,16 +31,26 @@ cross-family dependence is 0.445 and every other pair is under 0.16. So a
 family contributes its **best channel**, and families are combined by Fisher,
 which would be indefensible one level down.
 
-A family's best channel is taken *without* a Sidak correction over the
-channels it offered, and that is deliberate. Sidak is the adjustment for
-independent tests; inside a family the channels are strongly dependent, so it
-penalizes a candidate precisely for the consistency that makes its evidence
-worth having. Measured: a chamber whose readings were shifted by 30% led all
-five metrology channels and the correction pushed its family evidence from
-0.125 to 0.487, leaving the report abstaining on a grossly poisoned world.
-Nothing is lost by removing it, because the permutation null recalibrates
-whatever statistic it is given - an analytic correction on top of an exact
-null is a second, worse null.
+A family's best channel **is** Sidak-corrected over the channels that family
+offered, and the reason is not the usual one. Sidak is normally the adjustment
+for independent tests, and inside a family the channels are strongly dependent,
+so as an error-rate correction it would be the wrong instrument — the
+permutation controls the error rate exactly, and an analytic correction on top
+of an exact null is a second, worse null. It is kept because it is a monotone
+transform that buys **separation**: removing it makes every candidate's family
+evidence shrink together, which moves the permuted maximum as much as the
+observed one, and the engine measurably stops being able to be moved at all
+(ADR-029 §8: the no-Sidak variant abstains at p = 0.073 on the mutation the
+shipped one fires at).
+
+*(Corrected at the Phase 6 gate, 2026-08-10. This paragraph previously said the
+opposite — that the correction was **not** applied and that applying it left
+the report abstaining on a poisoned world — while `_family_evidence` twelve
+lines down applied it and said so, and ADR-029 §8's shipped row is
+"sidak + own_scale". Two records of one decision inside one module, disagreeing,
+and the code was never wrong. It is the same failure `statistics.py` records for
+its own registry table, and the same fix: the module that owns a decision states
+it once.)*
 
 **Calibrate by permuting the candidate label inside its own stratum, jointly
 within a family and independently across families.** Joint within a family
@@ -95,9 +105,47 @@ __all__ = [
     "sidak",
 ]
 
-#: The declared level the abstention is read at. Declared, not chosen to make
-#: anything pass: what it should be for a *fab* rather than for a benchmark is
-#: an open question the contract records.
+#: The declared level the abstention is read at.
+#:
+#: **Phase 6 measured the curve this level sits on (ADR-031) and left the level
+#: where it was.** On 660 fault-free worlds from three disjoint seed ranges and
+#: the 21 faulted development datasets, at the shipped anchor and statistic:
+#:
+#:     alpha    realized false alarms    detections (21 development faults)
+#:     0.0027           0.0000                        0
+#:     0.010            0.0106                        0
+#:     0.050            0.0667                        0
+#:     0.100            0.1303                        6
+#:     0.200            0.2197                        7
+#:
+#: Three things the table settles, and none of them is comfortable.
+#:
+#: At the declared level this engine fires on **none** of the development
+#: faults. At 0.10 it finds six, at a realized false-alarm rate of one world in
+#: eight. And at **0.0027** — the fab's own control-limit convention, the
+#: 3-sigma multiple eight of the nine `alarms.codes` in the world template
+#: declare, and the level ADR-027 borrowed for the evaluator's per-world
+#: *action* limit — it finds nothing, which is the number to quote if a report
+#: were ever wired to dispatch a technician rather than to be read by one.
+#:
+#: **The level stays 0.05, and the reason it does not move to 0.10 is the
+#: reason that matters.** Moving it would be choosing a level off the detection
+#: column, and a level chosen against the faulted population is precisely what
+#: `DIAGNOSIS_CONTRACT.md` §8's second decision forbids ("calibrated against the
+#: null worlds, never against the faulted ones"). The principle available is the
+#: one ADR-027 already established on the evaluator's side: an *action* limit
+#: for a per-world decision, a *screening* level where there is one verdict and
+#: power matters. This abstention chooses between offering a ranked candidate
+#: list with its evidence and saying "insufficient evidence"; a human takes the
+#: action afterwards. It is a screening decision, so it reads at the screening
+#: level, and both sides of the boundary now use one vocabulary.
+#:
+#: What a *fab* should declare is still open, and now for a stated reason
+#: rather than an unexamined one: closing it needs the relative cost of a
+#: missed excursion and a wasted investigation, this project has no cost model,
+#: and inventing one to justify a number is the architecture invention every
+#: gate here has refused. The curve above is published so that whoever has one
+#: does not have to re-measure it.
 ALPHA = 0.05
 
 #: Permutation count. Fixes the resolution of every p-value at 1/(N+1).
