@@ -1,0 +1,22 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "intermittent_particle_load",
+  "description": "A fault that is not there most of the time. The scenario contract has carried `profile: intermittent` since v1 and the envelope has been implemented since Step 3A, and no library scenario has ever used it — an untested branch in the shape a fault takes in time, which is precisely the dimension the diagnosis engine is supposed to reason about. A polish chamber sheds particles in bursts on a three-day period at a 45% duty cycle, with a drawn phase so the bursts do not begin on the onset tick. Every statistic in the registry contrasts a segment before a change point with a segment after it, and a duty-cycled fault raises the *mean* of the later segment while raising its *variance* more, which is the case a two-sample contrast is weakest at and a trend fit does not describe either. It is also the only fault in the library on a CMP tool.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "particle_excursion",
+      "target": {"tool": "CMP-01", "chamber": "B"},
+      "onset_day": 21,
+      "profile": {"type": "intermittent"},
+      "severity": "obvious"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}

@@ -1,0 +1,32 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "confounded_late_drift",
+  "description": "A second confounded world, deliberately unlike the first. Scenario G confounds an edge-uniformity fault that a metrology channel reads directly; this confounds a *parametric drift*, whose evidence is a slow move in the process summaries, and it does so late in the horizon with a dedication window that starts before the fault and outlasts it. One product is preferentially routed to the drifting chamber's tool from day 40 to day 75 at a share of 0.8, while the fault itself begins at day 45 and ramps over a fortnight. Because the window opens first, an engine that reads the routing shift as the change point will find a product and a tool that both moved and a chamber that moved later — the ordering is the evidence, and getting it wrong is the mistake this scenario is built to catch. The routing shift is honest observable data in `runs`, as ADR-015 requires; the drift is not.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "param_drift",
+      "target": {"tool": "ETCH-02", "chamber": "A"},
+      "onset_day": 45,
+      "profile": {"type": "ramp", "ramp_days": 14},
+      "severity": "moderate"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": [
+    {
+      "kind": "product_dedication",
+      "product": "Logic-14",
+      "tool": "ETCH-02",
+      "operation_type": "ETCH",
+      "start_day": 40,
+      "end_day": 75,
+      "share": 0.8
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "tool_wide_drift",
+  "description": "A fault whose correct answer is a *tool*, not a chamber. Every fault in the Phase 1 library targets one chamber, so 'attribute at chamber grain' has never been tested against the case where chamber grain is the wrong answer: here both chambers of one etch tool drift together, because the cause is shared — a common gas supply, a common calibration — and an engine that insists on naming a single chamber will split the evidence in half and name neither. The target states a tool and no chamber, which the scenario contract treats as a different declaration rather than a defaulted one, and the latent engine applies one drive to every chamber the target resolves to. It pairs deliberately with `parameter_drift`, which puts the same mechanism on one chamber of this same tool: the two differ in grain, severity and ramp, so the contrast between them is the grain question with everything else held as close as the library can hold it.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "param_drift",
+      "target": {"tool": "ETCH-03"},
+      "onset_day": 40,
+      "profile": {"type": "ramp", "ramp_days": 14},
+      "severity": "moderate"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}

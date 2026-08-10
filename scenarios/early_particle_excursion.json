@@ -1,0 +1,22 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "early_particle_excursion",
+  "description": "A particle-load excursion that begins in the second week, not the middle of the horizon. The physics is scenario I's, moved: one CVD chamber starts shedding material early, the load climbs, the in-situ alarm crosses its threshold and the fab responds on its own schedule. What the scenario exists for is the *timing*. Every Phase 1 fault onsets between day 30 and day 40 of 84, which made the engine's declared mid-horizon anchor look like an architecture when it was a property of the library; a fault at day 12 has almost no pre-onset record to be contrasted against and is the case that anchor rule is worst at. It is also the second CVD tool rather than the first, and it reaches no metrology channel at all — CD metrology in this world measures etch — so the evidence has to come from the process summaries, the defect plane and the alarm log.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "particle_excursion",
+      "target": {"tool": "CVD-02", "chamber": "B"},
+      "onset_day": 12,
+      "profile": {"type": "step"},
+      "severity": "moderate"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}

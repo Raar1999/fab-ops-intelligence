@@ -34,6 +34,11 @@ fabops-investigate = "fabops.investigation:main"
 # They are separately named so that typing the obvious command cannot hand
 # somebody the hard-coded story and let them believe they ran the engine.
 fabops-diagnose = "fabops.diagnosis.cli:main"
+# The Phase 6 benchmark: builds a named population, scores the engine on it and
+# prints the results table with the population attached. Deliberately named for
+# the evaluator rather than for the engine — it reads both planes, which
+# neither of the two above may do.
+fabops-benchmark = "fabeval.benchmark:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

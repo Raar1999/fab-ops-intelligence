@@ -50,6 +50,7 @@ from fabeval.leakage import (
     l8_seed_sensitivity,
     run_leakage_suite,
 )
+from fabeval.population import PHASE_1_SCENARIOS
 from fabeval.truthschema import TruthValidationError, validate_truth
 
 __all__ = [
@@ -65,9 +66,32 @@ __all__ = [
     "render",
 ]
 
-#: The Phase 1 library, in the order `SCENARIO_SPECIFICATION.md` §4 lists it.
-LIBRARY = ("null_baseline", "chamber_edge_uniformity", "parameter_drift",
-           "confounded_chamber_vs_product", "fault_repair_recovery")
+#: What A1-A11 score: **the Phase 1 five, and deliberately not the twelve.**
+#:
+#: Phase 6 grew the library to twelve, and the tempting move was to point this
+#: at all of them — more datasets graded looks like a stricter matrix. It is
+#: the wrong instrument. A1-A11 are the *Phase 1* acceptance criteria, written
+#: about the five members that existed then and ratified against exactly those;
+#: pointing them at scenarios designed afterwards lets a later configuration
+#: retroactively change a settled verdict, which is reopening Phase 1 by
+#: another route.
+#:
+#: It is not hypothetical. A5 requires every faulted scenario to carry at least
+#: 30% of its horizon as baseline before onset, and three Phase 6 members sit
+#: below that on purpose — `early_particle_excursion` onsets at 14% of the
+#: horizon precisely *because* ADR-029 §2 recorded that every Phase 1 fault
+#: onsetting at day 30-40 of 84 is "a benchmark artefact [that] must not become
+#: architecture", and the anchor rule cannot be selected without a fault that
+#: arrives somewhere else. Scored under A5 those scenarios would move the
+#: criterion PARTIAL -> BLOCKED, and the honest reading of that is not that the
+#: simulator regressed: it is that a Phase 1 criterion is being asked a
+#: question about Phase 6 data.
+#:
+#: The anti-leakage suite is the opposite case and *does* run on all twelve
+#: (`fabeval.benchmark`). L1-L11 assert properties of a **dataset** — no
+#: forbidden token, no perfect separation, no direct label effect — and those
+#: hold or fail whatever phase produced the configuration.
+LIBRARY = PHASE_1_SCENARIOS
 
 #: The library's declared default, and the seed the maintainers' index
 #: publishes for each dataset id.

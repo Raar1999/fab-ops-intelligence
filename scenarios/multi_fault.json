@@ -1,0 +1,29 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "multi_fault",
+  "description": "The deferred scenario J: two faults at once, in different equipment families, with different onsets and different shapes. An etch chamber develops radial non-uniformity from day 25 over a week; thirty days later a metal-deposition chamber suffers a particle excursion that steps straight in. The scenario contract has always permitted this and the roadmap deferred it until a single-fault baseline existed, because failure analysis against two simultaneous causes is uninterpretable without one. That baseline now exists. What this measures is whether the report is a *ranking* rather than an answer: two planted entities cannot both be rank one, so the honest outcomes are that both appear near the top or that one masks the other, and either is a finding. It also breaks an assumption the scoring adapter carried without stating it — that a dataset has one planted entity.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "chamber_edge_uniformity",
+      "target": {"tool": "ETCH-03", "chamber": "B"},
+      "onset_day": 25,
+      "profile": {"type": "ramp", "ramp_days": 7},
+      "severity": "moderate"
+    },
+    {
+      "mechanism": "particle_excursion",
+      "target": {"tool": "PVD-01", "chamber": "A"},
+      "onset_day": 55,
+      "profile": {"type": "step"},
+      "severity": "obvious"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}

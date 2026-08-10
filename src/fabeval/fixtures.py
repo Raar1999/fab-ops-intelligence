@@ -116,6 +116,112 @@ EXPECTATIONS: dict[str, dict[str, Any]] = {
         "min_leading": 1,
         "structure": ("arc_ordered", "maintenance_contrast"),
     },
+
+    # ---------------------------------------------------------- Phase 6
+    #
+    # Seven members joined the library at the Phase 6 gate. Their floors come
+    # from the **severity convention the five above already follow** — subtle
+    # 0.5, moderate 1.0, obvious 1.5 in leave-one-out sigma — and not from what
+    # they were measured to produce, because a floor chosen after seeing the
+    # result is a floor that measures the author. Where a scenario clears its
+    # convention floor comfortably that is reported and not tightened; where it
+    # sits near it, the expectation says so.
+    #
+    # One structural fact shapes all of them: the reference queries are
+    # **etch-centric**. `chamber_edge_cd_deviation` reads a metrology zone and
+    # CD metrology in this world measures etch; `chamber_edge_defect_share` and
+    # `chamber_yield_split` filter on `operation_type = 'ETCH'`. Only
+    # `alarm_counts` spans every equipment family. A CVD, PVD or CMP fault
+    # therefore has exactly one reference channel available to it, which is why
+    # `fault_repair_recovery` above already declares only `alarms` — the
+    # Phase 6 members inherit that limitation rather than introducing it.
+
+    "early_particle_excursion": {
+        "events": 1,
+        "channels": (
+            ("alarms", "CVD-02/B", 1.0, 3, True),
+        ),
+        "structure": (),
+    },
+    "late_gas_flow_step": {
+        "events": 1,
+        "channels": (
+            # `obvious`, and the fault is a step in delivered gas flow, which
+            # is the signal `MFC_DEV` charts at 2.5 sigma - the tightest alarm
+            # rule the world declares. This should be the loudest member of
+            # the library and the expectation says so.
+            ("alarms", "ETCH-01/B", 1.5, 2, True),
+        ),
+        "structure": (),
+    },
+    "tool_wide_drift": {
+        "events": 1,
+        "channels": (
+            # A tool-wide target splits one drive across two chambers, and a
+            # PM recentres `param_bias` continuously, so this is a hard member
+            # even at moderate: realized 1.29-2.92 sigma against a nominal 3.0.
+            # The second chamber is corroborating for the same reason B's
+            # defect channel is - measured across the development seeds it
+            # ranks 7th, 2nd and 17th, and requiring it would be requiring a
+            # guarantee the physics does not give.
+            ("alarms", "ETCH-03/A", 1.0, 5, True),
+            ("alarms", "ETCH-03/B", 0.0, 19, False),
+        ),
+        "structure": (),
+    },
+    "benign_correlate": {
+        "events": 0,
+        # Fault-free, like A - and scored the same way, by L7 rather than by a
+        # channel expectation. What it adds over A is `distractor_declared`:
+        # the whole scenario is a declared benign offset, and a build in which
+        # truth recorded no distractor would be scoring the null twice.
+        "channels": (),
+        "structure": ("no_events", "quiet", "distractor_declared"),
+    },
+    "confounded_late_drift": {
+        "events": 1,
+        "channels": (
+            ("alarms", "ETCH-02/A", 1.0, 5, True),
+        ),
+        "structure": ("confound_present", "confound_imperfect"),
+    },
+    "intermittent_particle_load": {
+        "events": 1,
+        "channels": (
+            # Corroborating, and for a **structural** reason rather than the
+            # stochastic one that made scenario B's defect channel
+            # corroborating. Every reference statistic here is a leave-one-out
+            # standing against same-role peers, and `zscore` refuses fewer than
+            # two of them. CMP-01 is the only CMP tool in this world and it has
+            # two chambers, so CMP-01/B has exactly one peer and *no* reference
+            # query can produce a number for it - measured z = +0.00 on
+            # `down_force_psi`, which is the refusal rather than a result.
+            # Requiring a channel that cannot exist would be requiring the
+            # world to have a different equipment roster.
+            ("alarms", "CMP-01/B", 0.0, 18, False),
+        ),
+        "structure": ("too_few_peers_to_rank",),
+    },
+    "multi_fault": {
+        "events": 2,
+        "channels": (
+            # The PVD event is required and it is the loudest thing in the
+            # library: a particle excursion drives `deposition_time_s` and
+            # `chamber_pressure_mtorr`, both of which carry an alarm rule.
+            ("alarms", "PVD-01/A", 1.5, 3, True),
+            # The etch event is corroborating, for the reason ADR-024 §5 gives
+            # for scenario B's defect channel. `edge_uniformity` reaches the
+            # alarm plane only through `endpoint_time_s` (sensitivity 0.30) and
+            # `chamber_pressure_mtorr` (0.05), so whether a planted chamber
+            # out-alarms its peers depends on where its own benign offset sits.
+            # Scenario B's ETCH-02/B reaches +4.34 and this one's ETCH-03/B
+            # reaches -0.31 on the same mechanism at the same severity, which
+            # is the spread rather than a defect.
+            ("alarms", "ETCH-03/B", 0.0, 17, False),
+        ),
+        "min_leading": 1,
+        "structure": (),
+    },
 }
 
 
@@ -155,6 +261,31 @@ def _structure(dataset: Any, name: str) -> tuple[bool, str]:
         ok = counts["alarms"] > 20 and counts["defects"] > 1000
         return ok, (f"a null fab still runs: {counts['alarms']} alarms, "
                     f"{counts['defects']} defects")
+    if name == "too_few_peers_to_rank":
+        # A positive assertion of a capability boundary, so that it cannot go
+        # unnoticed and cannot silently stop being true. Every reference
+        # statistic is a leave-one-out standing among same-role peers, so an
+        # entity needs at least two of them; the planted chamber's tool family
+        # has fewer, which is why this scenario's expectation asks for no
+        # channel. If a world ever gives that family a third chamber, this
+        # fails and the expectation has to be rewritten rather than inherited.
+        from fabeval.queries import _rows
+
+        tool = _target_label(truth).split("/")[0]
+        siblings = _rows(dataset.db_path, """
+            SELECT COUNT(*) FROM chambers c
+            JOIN tools t ON t.tool_id = c.tool_id
+            WHERE t.tool_type = (SELECT t2.tool_type FROM tools t2
+                                 WHERE t2.tool_name = ?)""", (tool,))[0][0]
+        return siblings < 3, (
+            f"{tool}'s tool family has {siblings} chamber(s); a leave-one-out "
+            f"standing needs at least 3")
+    if name == "distractor_declared":
+        declared = [d for d in truth["distractors"]
+                    if d["kind"] not in ("routing_condition",)
+                    and d.get("declared", True)]
+        return bool(declared), (
+            f"{len(truth['distractors'])} distractor record(s) in truth")
     if name == "repair_in_window":
         event = truth["events"][0]
         response = event["maintenance_response"]

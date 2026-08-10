@@ -158,6 +158,15 @@ def test_fabsim_does_not_import_its_own_grader():
             assert not name.startswith("fabeval"), module
 
 
+#: The two modules allowed to *cause* writing, and only by calling the
+#: emitter into a root the caller supplies. `matrix.py` builds the Phase 1
+#: acceptance library; `benchmark.py` builds a Phase 6 population, which is
+#: the same act at a different scale. The list is an allowlist rather than a
+#: rule about content so that a third writer has to arrive in a diff somebody
+#: reads.
+MAY_CALL_THE_EMITTER = {"matrix.py", "benchmark.py"}
+
+
 def test_fabeval_writes_nothing():
     """A grader that could write into a dataset could contaminate it."""
     for module in modules():
@@ -169,11 +178,32 @@ def test_fabeval_writes_nothing():
         for forbidden in ("write_text", "write_bytes", "mkdir", "unlink",
                           "rmtree", "executescript", "commit"):
             assert forbidden not in called, (module, forbidden)
-        # `build_library` is the one place that *causes* writing, and it does
-        # so by calling the emitter — which is fabsim's job, into a caller-
-        # supplied root.
-        if module.name != "matrix.py":
+        if module.name not in MAY_CALL_THE_EMITTER:
             assert "build_dataset" not in source, module
+
+
+def test_the_emitter_is_never_called_without_a_caller_supplied_root():
+    """The property the allowlist above is a proxy for.
+
+    `build_dataset`'s `root` defaults to `data/scenarios/`, so a call that
+    omits it writes into the repository — which is how a grader would come to
+    own datasets it also grades. Requiring the keyword makes the destination
+    the caller's decision at every call site, and it is checkable rather than
+    remembered.
+    """
+    for module in modules():
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = (node.func.attr if isinstance(node.func, ast.Attribute)
+                    else getattr(node.func, "id", ""))
+            if name != "build_dataset":
+                continue
+            keywords = {keyword.arg for keyword in node.keywords}
+            assert "root" in keywords, (
+                f"{module.name}:{node.lineno} calls build_dataset without an "
+                f"explicit root=, so it would write into the repository")
 
 
 def test_fabeval_is_stdlib_only():

@@ -43,8 +43,12 @@ from fabsim.world import load_world
 
 SCENARIO_ROOT = Path(__file__).resolve().parents[2] / "scenarios"
 
-#: The approved set (`SCENARIO_SPECIFICATION.md` §4), by file stem. Exactly
-#: five: D/E/F/H/J are not in Phase 1 and their absence is asserted.
+#: The Phase 1 set (`SCENARIO_SPECIFICATION.md` §4), by file stem. This module
+#: builds and inspects exactly these five, because its per-scenario assertions
+#: are about what A, B, C, G and I were each specified to realize. Phase 6 grew
+#: the directory to twelve; those members are checked here only for *contract*
+#: conformance — which costs no dataset build — and their observable behaviour
+#: is the benchmark's subject rather than this module's.
 LIBRARY = ("null_baseline", "chamber_edge_uniformity", "parameter_drift",
            "confounded_chamber_vs_product", "fault_repair_recovery")
 
@@ -97,18 +101,31 @@ def zscore(scores: dict[str, float], key: str) -> float:
 # ------------------------------------------------------------- the library
 
 
-def test_the_library_is_exactly_the_five_approved_scenarios():
-    """D/E/F/H/J are not Phase 1, and a sixth file would be scope creep."""
-    on_disk = sorted(p.stem for p in SCENARIO_ROOT.glob("*.json"))
-    assert on_disk == sorted(LIBRARY)
+def test_the_phase_1_five_are_all_still_present():
+    """A, B, C, G and I are the ADR-010 continuity set and the population the
+    Phase 1 acceptance matrix is scored on; losing one would move a ratified
+    verdict. Phase 6 members are permitted beside them and are checked by the
+    contract test below rather than by an exact-set assertion, which is what
+    made this test the one that broke when the library grew."""
+    on_disk = {p.stem for p in SCENARIO_ROOT.glob("*.json")}
+    assert set(LIBRARY) <= on_disk, sorted(set(LIBRARY) - on_disk)
 
 
-def test_every_scenario_validates_through_the_shipped_contract():
-    """No second parser, no bypass: `fabsim.scenario` or nothing."""
-    for name, config in configs().items():
-        assert config.world == "baseline_fab_v1", name
-        assert config.horizon_days == 84 and config.lots == 20, name
-        assert config.default_seed == 42, name
+def test_every_scenario_on_disk_validates_through_the_shipped_contract():
+    """No second parser, no bypass: `fabsim.scenario` or nothing.
+
+    Every config in the directory, not only the Phase 1 five — a scenario
+    added later that quietly used a different world or a different horizon
+    would produce datasets nothing else in the library is comparable to, and
+    anti-leakage rule D7 exists to stop exactly that.
+    """
+    on_disk = sorted(SCENARIO_ROOT.glob("*.json"))
+    assert len(on_disk) >= len(LIBRARY)
+    for path in on_disk:
+        config = load_scenario(path)
+        assert config.world == "baseline_fab_v1", path.stem
+        assert config.horizon_days == 84 and config.lots == 20, path.stem
+        assert config.default_seed == 42, path.stem
         assert json.loads(config.canonical_json)["fabsim"] == "scenario/v1"
 
 

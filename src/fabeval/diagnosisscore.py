@@ -35,12 +35,22 @@ __all__ = ["DiagnosisOutcome", "Score", "score_dataset", "score_population"]
 
 @dataclass(frozen=True)
 class DiagnosisOutcome:
-    """One report, joined to one answer key."""
+    """One report, joined to one answer key.
+
+    `planted` is a **tuple**, because a dataset may plant more than one entity.
+    That was an assumption the adapter carried silently until the Phase 6
+    library contained a two-fault scenario, and the failure mode of leaving it
+    was quiet rather than loud: `events[0]` would have scored the first planted
+    entity and treated a correct identification of the second as a miss.
+    `rank` is the best rank any planted entity reached and `ranks` keeps them
+    all, since with two planted entities only one of them can be first and
+    reporting only the best would hide the other.
+    """
 
     dataset_id: str
     scenario: str
     faulted: bool
-    planted: str | None
+    planted: tuple[str, ...]
     abstained: bool
     p_familywise: float
     top: str | None
@@ -48,6 +58,7 @@ class DiagnosisOutcome:
     of: int
     onset_error_days: float | None
     not_assessable: int
+    ranks: tuple[int | None, ...] = ()
 
     @property
     def correct_abstention(self) -> bool:
@@ -64,6 +75,20 @@ class DiagnosisOutcome:
     @property
     def attributed(self) -> bool:
         return bool(self.faulted and self.rank == 1)
+
+    @property
+    def all_attributed(self) -> bool:
+        """Every planted entity in the top `len(planted)` places.
+
+        The generous reading of a multi-fault result — two planted entities
+        cannot both be rank 1, so "did the report put both of them at the
+        top?" is the question that has an answer.
+        """
+        if not self.faulted:
+            return False
+        positions = [r for r in self.ranks if r is not None]
+        return (len(positions) == len(self.planted)
+                and max(positions) <= len(self.planted))
 
 
 @dataclass(frozen=True)
@@ -111,15 +136,44 @@ class Score:
         return st.mean(1.0 / r for r in ranks)
 
     @property
+    def top3_rate(self) -> float | None:
+        """How often a planted entity reached the top three.
+
+        Reported beside rank-1 because a ranking that puts the answer second is
+        a different kind of result from one that does not find it at all, and
+        an engine this weak needs the distinction to be visible.
+        """
+        faulted = [o for o in self.faulted if o.rank]
+        if not faulted:
+            return None
+        return sum(1 for o in faulted if o.rank <= 3) / len(faulted)
+
+    @property
+    def multi_attribution_rate(self) -> float | None:
+        """On multi-fault datasets, how often *every* planted entity is at the
+        top. `None` where the population has no multi-fault member."""
+        multi = [o for o in self.faulted if len(o.planted) > 1]
+        if not multi:
+            return None
+        return sum(1 for o in multi if o.all_attributed) / len(multi)
+
+    @property
     def median_onset_error(self) -> float | None:
         errors = [o.onset_error_days for o in self.faulted
                   if o.onset_error_days is not None]
         return st.median(errors) if errors else None
 
+    @property
+    def scenarios(self) -> tuple[str, ...]:
+        return tuple(sorted({o.scenario for o in self.outcomes if o.scenario}))
+
     def render(self) -> str:
+        from fabeval.population import claimable
+
         lines = [f"diagnosis on {self.population}",
                  f"  datasets {len(self.outcomes)} "
-                 f"({len(self.faulted)} faulted, {len(self.nulls)} fault-free)"]
+                 f"({len(self.faulted)} faulted, {len(self.nulls)} fault-free) "
+                 f"over {len(self.scenarios)} scenario(s)"]
 
         def show(label: str, value: float | None, fmt: str = ".3f") -> str:
             return f"  {label:26s} {'n/a' if value is None else format(value, fmt)}"
@@ -127,8 +181,19 @@ class Score:
         lines += [show("false-alarm rate", self.false_alarm_rate),
                   show("detection rate", self.detection_rate),
                   show("attribution rate (rank 1)", self.attribution_rate),
+                  show("attribution rate (top 3)", self.top3_rate),
+                  show("all planted at the top", self.multi_attribution_rate),
                   show("mean reciprocal rank", self.mean_reciprocal_rank),
                   show("median onset error (d)", self.median_onset_error, ".1f")]
+
+        # The population guard, printed with the number rather than beside it,
+        # because a correct number quoted without its population is the exact
+        # failure `fabeval.population` exists to prevent.
+        allowed, reason = claimable(self.scenarios)
+        lines.append(f"  {'capability claim':26s} "
+                     f"{'permitted' if allowed else 'NOT PERMITTED'}")
+        if reason:
+            lines.append(f"  note: {reason}")
         lines += [f"  note: {n}" for n in self.notes]
         return "\n".join(lines)
 
@@ -174,33 +239,46 @@ def score_dataset(report: Mapping[str, Any], truth: Mapping[str, Any],
 
     events = truth.get("events") or []
     faulted = bool(events)
-    planted = None
-    onset_day = None
-    if faulted:
-        target = events[0]["target"]
+
+    planted: list[str] = []
+    onset_days: list[float | None] = []
+    for event in events:
+        target = event["target"]
         chamber = target.get("chamber")
-        planted = (f"chamber:{target['tool']}/{chamber}" if chamber
-                   else f"tool:{target['tool']}")
-        onset_day = _onset_day(events[0], time_origin)
+        planted.append(f"chamber:{target['tool']}/{chamber}" if chamber
+                       else f"tool:{target['tool']}")
+        onset_days.append(_onset_day(event, time_origin))
 
     assessed = [c for c in report["candidates"] if c["status"] == "assessed"]
     ranked = [_entity_key(c["entity"]) for c in assessed]
-    rank = ranked.index(planted) + 1 if planted in ranked else None
 
+    ranks = tuple(ranked.index(name) + 1 if name in ranked else None
+                  for name in planted)
+    found = [r for r in ranks if r is not None]
+    best = min(found) if found else None
+
+    # Onset error is reported for the planted entity the report placed best,
+    # because that is the one whose onset estimate a reader would act on.
     onset_error = None
-    if faulted and onset_day is not None and planted in ranked:
-        onsets = assessed[ranked.index(planted)].get("onsets") or []
-        if onsets:
-            onset_error = min(abs(o["day"] - float(onset_day)) for o in onsets)
+    if best is not None:
+        index = ranks.index(best)
+        onset_day = onset_days[index]
+        if onset_day is not None:
+            onsets = assessed[best - 1].get("onsets") or []
+            if onsets:
+                onset_error = min(abs(o["day"] - float(onset_day))
+                                  for o in onsets)
 
     return DiagnosisOutcome(
         dataset_id=report["dataset_id"], scenario=scenario, faulted=faulted,
-        planted=planted, abstained=bool(report["insufficient_evidence"]),
+        planted=tuple(planted),
+        abstained=bool(report["insufficient_evidence"]),
         p_familywise=float(report["abstention"]["p_familywise"]),
-        top=ranked[0] if ranked else None, rank=rank, of=len(ranked),
+        top=ranked[0] if ranked else None, rank=best, of=len(ranked),
         onset_error_days=onset_error,
         not_assessable=sum(1 for c in report["candidates"]
-                           if c["status"] == "not_assessable"))
+                           if c["status"] == "not_assessable"),
+        ranks=ranks)
 
 
 def score_population(pairs: Sequence[Sequence[Any]], population: str,

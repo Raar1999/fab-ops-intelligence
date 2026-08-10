@@ -1,0 +1,20 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "benign_correlate",
+  "description": "The deferred scenario H, and the second world whose correct answer is 'insufficient evidence'. Nothing is faulted. One etch chamber simply carries a larger permanent offset than its siblings — a `large` declared distractor, 1.4 of the latent's healthy weekly sigma, which sits inside the `subtle` severity band the ladder starts at. Rule F11 already gives every chamber in every world an offset, so this widens a distribution rather than introducing one, and nothing in the observable plane says which chamber was declared. What separates this from a fault is only its shape in time: it was there on day 1 and it is there on day 84, and no maintenance moves it. The null baseline asks whether an engine can abstain on a quiet world; this asks whether it can abstain on a world that has something to point at.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [],
+  "distractors": [
+    {
+      "mechanism": "benign_offset",
+      "target": {"tool": "ETCH-02", "chamber": "C"},
+      "magnitude": "large"
+    }
+  ],
+  "routing_conditions": []
+}

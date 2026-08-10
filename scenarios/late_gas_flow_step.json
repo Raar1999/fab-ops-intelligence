@@ -1,0 +1,22 @@
+{
+  "fabsim": "scenario/v1",
+  "name": "late_gas_flow_step",
+  "description": "The deferred scenario D — a sudden excursion rather than a drift — placed deliberately late. One etch chamber's delivered gas flow steps off its setpoint at day 63 and stays there: no ramp, no warning, three weeks of record afterwards and nine before. This is scenario C's mechanism under `profile: step`, which the mechanism library has supported since day one, so it costs a configuration and no code. Two things it measures that the Phase 1 five cannot. A late fault leaves a short post-onset segment, which is where a change-point contrast has least to work with and where a mid-horizon anchor is simply in the wrong place; and a step at `obvious` is the easiest shape this library contains, so if the engine cannot find this one, the difficulty is not the fault.",
+
+  "world": "baseline_fab_v1",
+  "horizon_days": 84,
+  "lots": 20,
+  "default_seed": 42,
+
+  "events": [
+    {
+      "mechanism": "param_drift",
+      "target": {"tool": "ETCH-01", "chamber": "B"},
+      "onset_day": 63,
+      "profile": {"type": "step"},
+      "severity": "obvious"
+    }
+  ],
+  "distractors": [],
+  "routing_conditions": []
+}
