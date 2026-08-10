@@ -28,9 +28,49 @@ from fabops.monitors.model import (DEFAULT_CHART_RULE, Signal, charted_points,
                                    order_signals, peer_difference, series_from,
                                    spc_signals)
 
-__all__ = ["FAMILY", "monitor_process"]
+__all__ = ["CHANNEL_SOURCES", "FAMILY", "channel_series", "channels_of",
+           "monitor_process"]
 
 FAMILY = "process"
+
+#: Where each charted channel comes from, and the key it is named by. The
+#: prefix is part of the channel's name everywhere — a report, a chart title
+#: and a signal all say `fdc:rf_power_w` — so the two substrates can never be
+#: confused for one another by a reader or by a lookup.
+CHANNEL_SOURCES = {
+    "fdc": ("fact_run_param", "run_meas_id"),
+    "metrology": ("fact_metrology", "metrology_id"),
+}
+
+
+def channels_of(connection: sqlite3.Connection) -> tuple[str, ...]:
+    """Every channel this dataset can be charted on, in a stable order."""
+    out: list[str] = []
+    for prefix, (view, _key) in sorted(CHANNEL_SOURCES.items()):
+        out.extend(f"{prefix}:{name}" for (name,) in connection.execute(
+            f"SELECT DISTINCT param_name FROM {view} ORDER BY param_name"))
+    return tuple(out)
+
+
+def channel_series(connection: sqlite3.Connection, channel: str):
+    """The peer-differenced daily series per chamber for one channel.
+
+    The same series the rules are evaluated on, exposed so that a chart drawn
+    for a human is the chart the decision was made from rather than a second
+    computation that happens to look similar.
+    """
+    prefix, _, name = channel.partition(":")
+    if prefix not in CHANNEL_SOURCES:
+        raise ValueError(f"unknown channel {channel!r}; expected one of "
+                         f"{sorted(CHANNEL_SOURCES)} as a prefix")
+    view, key = CHANNEL_SOURCES[prefix]
+    rows = connection.execute(
+        f"SELECT chamber_label, day_index, deviation_frac FROM {view} "
+        f"WHERE param_name = ? AND deviation_frac IS NOT NULL "
+        f"ORDER BY {key}", (name,)).fetchall()
+    values, support = _daily(rows)
+    return series_from(peer_difference(values, _roles(connection)), support,
+                       channel)
 
 
 def _roles(connection: sqlite3.Connection) -> dict[str, str]:

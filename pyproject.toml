@@ -21,7 +21,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-app = ["streamlit>=1.30"]
+# The workspace is written against the modern width API
+# (`width="stretch"`), which arrived in 1.49; the floor states
+# that rather than leaving a deprecation warning for a reader to
+# discover at run time.
+app = ["streamlit>=1.49"]
 notebook = ["jupyter>=1.0", "nbclient>=0.8", "nbformat>=5.9"]
 dev = ["pytest>=7.0"]
 

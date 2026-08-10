@@ -419,6 +419,30 @@ def _chart_of(days: Sequence[int], values: Sequence[float],
     return chart, per_day
 
 
+def chart_limits(series: Series, horizon_days: int,
+                 chart_rule: str = DEFAULT_CHART_RULE
+                 ) -> tuple[Chart, tuple[float, ...], tuple[float, ...]] | None:
+    """The chart a presentation surface needs to draw: centre and both limits.
+
+    Returned per point, because under the `xbar` rule the limits breathe with
+    the day's subgroup size and a drawn chart that ignored that would not be
+    the chart the rules were evaluated against. A picture that disagrees with
+    the decision it illustrates is worse than no picture.
+    """
+    built = _chart_of(series.days, series.values, series.support,
+                      horizon_days, chart_rule)
+    if built is None:
+        return None
+    chart, per_day = built
+    upper, lower = [], []
+    for day in series.days:
+        spread = (per_day.get(int(day), chart.spread) or chart.spread)
+        half = SIGMA_LIMIT * spread * chart.inflation
+        upper.append(chart.centre + half)
+        lower.append(chart.centre - half)
+    return chart, tuple(upper), tuple(lower)
+
+
 def charted_points(series: Series, horizon_days: int,
                    chart_rule: str = DEFAULT_CHART_RULE) -> int:
     """How many points this series was actually judged on.
