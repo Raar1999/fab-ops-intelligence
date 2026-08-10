@@ -55,11 +55,11 @@ fabops-report = "fabops.report.cli:main"
 # the evaluator rather than for the engine — it reads both planes, which
 # neither of the two above may do.
 fabops-benchmark = "fabeval.benchmark:main"
-# Renders the README's benchmark section from a committed results document.
-# It measures nothing: `fabops-benchmark --emit` produces the numbers and this
-# turns them into prose, so a public figure and a measured one cannot part
-# company without a test noticing.
-fabops-publish = "fabeval.publish:main"
+# There is deliberately no `fabops-publish` console script. Rendering the
+# README's benchmark section is `fabeval.publish` (pure functions) and *writing*
+# it is `publish_readme.py` at the repository root, beside `build_notebook.py` —
+# because ADR-024 makes "fabeval writes nothing" an absolute lexical rule, and a
+# single exception for a well-behaved caller is how such a rule stops being one.
 
 [tool.setuptools.packages.find]
 where = ["src"]

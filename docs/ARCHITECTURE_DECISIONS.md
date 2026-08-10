@@ -847,37 +847,42 @@ What the audit actually asked for is delivered: `step_id = 4` hard-coded in nine
 
   The t quantile is computed from the regularized incomplete beta because this repository does not take a numerical dependency for one function, and it is pinned against five published table values. That test is not ceremony: the first implementation applied its continued fraction's first partial numerator twice, was **correct at ten degrees of freedom and wrong at fifteen**, and would have shipped a plausible-looking inflation factor that mis-sized every chart in the fab.
 
-**3. Three limit conventions were built and the calibrated one wins, with the other two kept and their cost recorded.** The same measurement, twelve fault-free worlds, 12,016 charted points, as the single-point rule's realized per-point rate:
+**3. Three limit conventions were built and the calibrated one wins, with the other two kept and their cost recorded.** The same measurement, twelve fault-free worlds, 9,052 charted points, as the single-point rule's realized per-point rate:
 
 ```
-individuals    0.0117  (4.3x nominal)   one constant spread from the baseline   <- shipped
-xbar           0.0189  (7.0x)           limits scaled by 1/sqrt(n) per day
-moving_range   0.0201  (7.5x)           MR-bar / 1.128 over the whole horizon
+                  shipped   without the effective-size discount
+individuals    0.0060 (2.2x)      0.0160 (5.9x)     <- shipped
+xbar           0.0088 (3.3x)      0.0202 (7.5x)
+moving_range   0.0162 (6.0x)      0.0266 (9.9x)
 ```
 
   `moving_range` was expected to win — sixty degrees of freedom instead of a dozen, and immune to a step — and it loses because a moving range measures *one-step* variation while this series carries slow structure a one-step difference cannot see. `xbar` loses because day-to-day variation here is not within-day sampling noise, so scaling by the subgroup size buys the tightest limits on the days that least deserve them. Both stay registered with their numbers, on the precedent ADR-031 §6 set for `trend_contrast`: a registry member with a measured reason is worth more than one with none.
 
-**4. The residual 4.3× is published, not tuned away, and its causes are separated.** With a spread estimated from the *whole* series — sixty-odd points, so essentially no estimation error — the rate is still **0.0055, 2.0× nominal**, because the series is mildly heavy-tailed (kurtosis 3.36) and serially correlated (lag-1 +0.17). The remainder is what a twelve-point baseline costs even after an exact t correction, since correlated points carry less information than their count suggests.
+**4. The residual is isolated rather than tolerated, and a second correction follows from isolating it.** Judging the *same points* against a spread estimated from the **whole series** — enough points that estimation error is negligible — reads **0.0025, which is 0.94× nominal**. The chart is therefore correct when its spread is; neither the fab nor the rule is at fault, and the entire inflation is the price of a twelve-day Phase I window.
 
-  The obvious suspect was checked and cleared: the fab is **not** drifting. Per-quarter median spreads over the same worlds are 0.01309 / 0.01358 / 0.01340 / 0.01350 — stationary to within 3% — and the 1.23 "later window is noisier" ratio an earlier measurement reported is the right-skew of a ratio of two small-sample variance estimates, not a property of the fab.
+  Two suspects were checked and cleared before that conclusion. The fab is **not** drifting: per-quarter median spreads over the same worlds are 0.01309 / 0.01358 / 0.01340 / 0.01350, stationary to within 3%, and the 1.23 "later window is noisier" ratio an earlier measurement reported is the right-skew of a ratio of two small-sample variance estimates. And the series is only mildly heavy-tailed (kurtosis median 3.09 against 3), which cannot account for a five-fold rate.
 
-  Widening the limits until the realized rate matched would be fitting a threshold to the very worlds it judges, which ADR-027 §2 rejected as option A and called circular. So the limit stays the fab's own three-sigma action convention — the multiple eight of the nine `alarms.codes` declare — and the realized rate is published in the module, in the report's settings, and in the README's limitations.
+  What remained is that a daily series of this fab is **serially correlated** — lag-1 +0.19, because a lot's wafers share an offset and run across consecutive days — so twelve baseline points carry less information than twelve independent ones, and a Student-t inflation computed from `k − 1` is too small. `effective_size` discounts the count by `k(1−ρ)/(1+ρ)`, the standard effective-sample-size correction, with ρ estimated from the whole series because a twelve-point estimate of it would be noise. That takes the shipped rule from **5.9× to 2.2×** and moves every chart's limits, so `fabops.monitors` goes 1.0.0 → 1.1.0.
 
-**5. A signal count is not attribution. This is the finding, and it was nearly shipped as a capability.** On the demo at seed 42 the planted chamber leads the fab 52 signals to 18, which reads exactly like attribution and would have made a good sentence. Run over six library scenarios it does not hold:
+  The objection to a whole-series ρ is that a fault then influences the limits it is judged against — the adaptive-spread failure this module refuses everywhere else — so it was measured rather than argued. On the demo against the same world with nothing wrong in it, the planted chamber's median ρ moves from **+0.193 to −0.004**: the fault *lowers* its estimate and therefore *tightens* its own limits, while the fab-wide median is unchanged (+0.158 against +0.156). The immune alternative was measured too — ρ from the baseline window alone reads 4.2× — and a fab-wide ρ pooled over every charted series would be both immune and precise. That is the natural next refinement, and it is named here rather than left to be rediscovered.
+
+  Both corrections are *derivations* — one from the t distribution, one from the effective sample size — and neither is a number fitted to the worlds it judges, which is the circularity ADR-027 §2 rejected as option A. The limit itself stays the fab's own three-sigma action convention, the multiple eight of the nine `alarms.codes` declare, and the realized rate is published in the module, in the report's settings and in the README's limitations.
+
+**5. A signal count is not attribution. This is the finding, and it was nearly shipped as a capability.** On the demo at seed 42 the planted chamber leads the fab, which reads exactly like attribution and would have made a good sentence. Run over six library scenarios it does not hold (counts after §4's correction):
 
 ```
 scenario                        planted        leader        planted signals
-chamber_edge_uniformity         ETCH-02/B      ETCH-02/B     52 of 99
-confounded_chamber_vs_product   ETCH-01/A      ETCH-01/A     84 of 159
-parameter_drift                 ETCH-03/A      ETCH-02/B     17   (rank 3)
+chamber_edge_uniformity         ETCH-02/B      ETCH-02/B     10 of 23
+confounded_chamber_vs_product   ETCH-01/A      ETCH-01/A     15 of 34
+parameter_drift                 ETCH-03/A      ETCH-02/B      8   (rank 2)
 fault_repair_recovery           CVD-01/A       ETCH-02/B      0
 late_gas_flow_step              ETCH-01/B      ETCH-02/B      0
 tool_wide_drift                 ETCH-03 (tool) ETCH-02/B      -
 ```
 
-  **One chamber leads four of six, and three of those plant their fault elsewhere.** The cause was measured rather than guessed: the per-chamber *denominators* are equal to within 30% (168–228 charted points each), so this is not an exposure artefact — it is that a chart whose dozen baseline days happened to be quiet keeps tight limits for the rest of the horizon, and that luck varies four- to five-fold between chambers. The Student-t inflation prices that correctly *on average over series* and cannot make it uniform *across* them.
+  **One chamber leads four of six, and three of those plant their fault elsewhere.** The cause was measured rather than guessed: the per-chamber *denominators* are equal to within 30% (168–228 charted points each), so this is not an exposure artefact — it is that a chart whose dozen baseline days happened to be quiet keeps tight limits for the rest of the horizon, and that luck varies four- to five-fold between chambers. Both inflation corrections price that correctly *on average over series* and neither can make it uniform *across* them; the worst chamber of a fault-free world still carries a median 38% of its fab's chamber-grain signals.
 
-  The counter-design was measured too and is worse: charting each **run** instead of each day gives every chart sixty baseline points, and reads **0.032 — twelve times nominal — with concentration unchanged**, because a lot's wafers share a lot-level offset so one unusual lot produces a run of alarms. Day-grain aggregation is the better instrument and the concentration is its price.
+  The counter-design was measured too and is worse: charting each **run** instead of each day gives every chart sixty baseline points, and reads **0.032 — twelve times nominal — with concentration unchanged**, because a lot's wafers share a lot-level offset so one unusual lot produces a run of alarms. That is the same serial dependence §4 discounts for, strong enough at run grain to overwhelm the extra points. Day-grain aggregation is the better instrument and the concentration is its price.
 
   What ships instead: the process family reports each chamber's signal count **with its denominator and a note saying it is not a ranking**, and attribution stays where it is calibrated — `fabops.diagnosis`, which compares a candidate against a permutation of the candidate label inside the same dataset. A test asserts the refutation *in both directions*: the busiest chamber must not be the planted one on every scenario (which would be attribution, unbenchmarked), and the demo's own ranking must still hold (or the monitors have stopped responding to the one fault they were measured against).
 
@@ -885,7 +890,7 @@ tool_wide_drift                 ETCH-03 (tool) ETCH-02/B      -
 
 **6. Phase 3's "quiet on the null scenario" is restated, for the same reason.** Taken literally it is unsatisfiable by a correct instrument: this fab's fault-free worlds alarm, escalate and get repaired **by design** (`ANTI_LEAKAGE_DESIGN.md` §3.2), and rule F11 puts a permanent benign offset on every chamber. A monitor silent on such a world would be a monitor that cannot fire, and comparing one null world against one faulted world is the one-draw trap ADR-025 §5 fell into — measured here too, where a null world's worst chamber (67 signals) exceeds the demo's planted chamber (52).
 
-  The criterion now reads: **the charts must fire on a healthy fab, and their realized rate must be measured on a population of them and stay where it was measured.** Both halves are tests.
+  The criterion now reads: **the charts must fire on a healthy fab, and their realized rate must be measured on a population of them and stay where it was measured.** Both halves are tests, and the second is expressed as the single-point rule's per-point rate rather than as a total signal count — the count pools six rules with different nominal rates, and on one eight-world sample it ranked `xbar` ahead of `individuals` by 2% while the per-point rate separated them by 50%. A selection criterion that can invert on sampling noise is not a criterion.
 
 ## ADR-034 — Decision support wraps the investigation rather than extending it, and never invents a subject
 

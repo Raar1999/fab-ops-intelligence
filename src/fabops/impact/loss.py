@@ -35,7 +35,7 @@ import math
 import sqlite3
 import statistics as st
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from fabops.impact.exposure import subject_predicate
 

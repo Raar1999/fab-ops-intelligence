@@ -14,7 +14,6 @@ happens. Matplotlib is used headless (`Agg`) and each function returns a
 """
 from __future__ import annotations
 
-import math
 from typing import Any, Mapping, Sequence
 
 import matplotlib

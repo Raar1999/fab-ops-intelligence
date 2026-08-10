@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -324,14 +325,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="override the population's declared seeds")
     parser.add_argument("--diversity-only", action="store_true",
                         help="print the coverage table and build nothing")
-    parser.add_argument("--emit", type=Path, default=None,
-                        help=("write a fabeval.results/v1 document here. It is "
-                              "what `fabops-publish` renders the README's "
+    parser.add_argument("--emit-json", action="store_true",
+                        help=("print a fabeval.results/v1 document on stdout "
+                              "and send the human tables to stderr. It is what "
+                              "`publish_readme.py` renders the README's "
                               "benchmark section from, so a public number and "
-                              "a measured one cannot part company."))
+                              "a measured one cannot part company. This "
+                              "command writes no file: the caller redirects, "
+                              "exactly as the other three do."))
     arguments = parser.parse_args(argv)
 
-    print(render_diversity(diversity()))
+    stream = sys.stderr if arguments.emit_json else sys.stdout
+    print(render_diversity(diversity()), file=stream)
     if arguments.diversity_only:
         return 0
 
@@ -355,8 +360,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             built, f"{role} ({len(scenarios)} scenarios x {len(seeds)} seeds)",
             notes=(note,))
         scores.append(score)
-        print()
-        print(score.render())
+        print(file=stream)
+        print(score.render(), file=stream)
 
     if len(scores) > 1:
         # The whole library, scored as one population. This is the row a claim
@@ -372,34 +377,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                    "separately above because a development number describes "
                    "the fit and a held-out one describes the capability",))
         scores.append(combined)
-        print()
-        print(combined.render())
+        print(file=stream)
+        print(combined.render(), file=stream)
 
-    if arguments.emit is not None:
-        _emit(arguments.emit, scores)
-        print(f"wrote {arguments.emit}")
+    if arguments.emit_json:
+        from fabeval.publish import results_document
+
+        report = diversity()
+        print(json.dumps(results_document(
+            scores, diversity_axes={axis: len(report.values(axis))
+                                    for axis in DIVERSITY_AXES}),
+            indent=2, sort_keys=False))
     return 0
 
-
-def _emit(path: Path, scores: Sequence[Any]) -> None:
-    """Write the results document the public surfaces are rendered from."""
-    from fabops.diagnosis import ENGINE
-    from fabops.diagnosis.anchors import DECLARED_FRACTIONS
-    from fabops.diagnosis.decide import ALPHA, PERMUTATIONS
-    from fabops.diagnosis.statistics import DEFAULT_STATISTIC
-    from fabeval.publish import results_document
-
-    report = diversity()
-    document = results_document(
-        scores, engine=ENGINE,
-        settings={"statistic": DEFAULT_STATISTIC, "alpha": ALPHA,
-                  "permutations": PERMUTATIONS,
-                  "anchor_fractions": list(DECLARED_FRACTIONS)},
-        diversity_axes={axis: len(report.values(axis))
-                        for axis in DIVERSITY_AXES})
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(document, indent=2, sort_keys=False)
-    path.write_text(payload + chr(10), encoding="utf-8")
 
 
 if __name__ == "__main__":                              # pragma: no cover

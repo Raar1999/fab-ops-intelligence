@@ -22,8 +22,9 @@ from pathlib import Path
 import pytest
 
 from fabeval.publish import (README_BEGIN, README_END, RESULTS_SCHEMA,
-                             apply_block, extract_block, main, render_markdown,
+                             apply_block, extract_block, render_markdown,
                              results_document)
+from publish_readme import main
 
 REPO = Path(__file__).resolve().parents[2]
 RESULTS = REPO / "docs" / "benchmark_results.json"
@@ -83,9 +84,28 @@ def test_the_library_row_is_the_one_a_claim_is_permitted_on(document):
     assert any(len(row["scenarios"]) >= 10 for row in permitted)
 
 
+def test_the_evaluation_plane_still_writes_nothing():
+    """The rule this module was moved for. `fabeval` calls no writer; the file
+    handling lives in `publish_readme.py` at the repository root, next to
+    `build_notebook.py`, because ADR-024 §1 is absolute and an exception for one
+    well-behaved caller is how such a rule stops being one."""
+    import ast
+    import inspect
+
+    from fabeval import publish
+
+    source = inspect.getsource(publish)
+    tree = ast.parse(source)
+    called = {node.func.attr for node in ast.walk(tree)
+              if isinstance(node, ast.Call)
+              and isinstance(node.func, ast.Attribute)}
+    assert not ({"write_text", "write_bytes", "mkdir", "unlink"} & called)
+    assert "def main(" not in source
+
+
 def test_the_rendered_block_states_the_conditions_and_the_verdict(document):
     block = render_markdown(document)
-    assert "fabops-benchmark" in block and "fabops-publish" in block
+    assert "fabops-benchmark" in block and "publish_readme.py" in block
     assert str(document["settings"]["alpha"]) in block
     assert document["engine"] in block
     for population in document["populations"]:
@@ -118,7 +138,7 @@ def test_the_readme_matches_the_committed_measurement(document):
     the project's front page no longer matches the harness that produced it.
 
     Fix by running:
-        fabops-publish --results docs/benchmark_results.json --readme README.md
+        python publish_readme.py
     """
     text = README.read_text(encoding="utf-8")
     assert README_BEGIN in text and README_END in text, (
@@ -130,6 +150,16 @@ def test_the_check_mode_agrees(document, capsys):
     assert main(["--results", str(RESULTS), "--readme", str(README),
                  "--check"]) == 0
     assert "matches" in capsys.readouterr().out
+
+
+def test_the_settings_are_read_from_the_engine_not_declared(document):
+    """A default living in the evaluator would be a second declaration of
+    something the engine owns, and the two would drift."""
+    from fabeval.publish import engine_settings
+
+    declared = engine_settings()
+    assert declared["engine"] == document["engine"]
+    assert declared["settings"] == document["settings"]
 
 
 def test_the_check_mode_fails_on_a_stale_target(tmp_path, document):

@@ -36,6 +36,8 @@ from typing import Iterable, Mapping, Sequence
 
 __all__ = [
     "BASELINE_FRACTION",
+    "effective_size",
+    "lag_one_autocorrelation",
     "MIN_BASELINE_POINTS",
     "MIN_PEERS",
     "SIGMA_LIMIT",
@@ -83,40 +85,45 @@ ACTION_ALPHA = 0.0027
 #: versioned component and the loser is kept with its cost on the record. This
 #: is the same shape as the engine's statistic registry (ADR-029 §5).
 #:
-#: Measured on twelve fault-free worlds, as the single-point rule's realized
-#: per-point rate against its nominal 0.0027 (12,016 charted points):
+#: Measured on twelve fault-free worlds, 9,052 charted points, as the
+#: single-point rule's realized per-point rate against its nominal 0.0027:
 #:
-#:   individuals    0.0117  (4.3x)  one constant spread from the baseline daily
+#:   individuals    0.0060  (2.2x)  one constant spread from the baseline daily
 #:                  values — what a shop-floor individuals chart does. **The
 #:                  default: measurably the best calibrated of the three.**
-#:   xbar           0.0189  (7.0x)  limits scaled by 1/sqrt(n) for the day's own
+#:   xbar           0.0088  (3.3x)  limits scaled by 1/sqrt(n) for the day's own
 #:                  subgroup size. Correct only if day-to-day variation were
 #:                  within-day sampling noise; on this fab a between-day
 #:                  component dominates, so scaling by n buys tight limits on
 #:                  the days that least deserve them.
-#:   moving_range   0.0201  (7.5x)  spread from the whole horizon's mean moving
+#:   moving_range   0.0162  (6.0x)  spread from the whole horizon's mean moving
 #:                  range (MR-bar / 1.128). It was expected to win — sixty
 #:                  degrees of freedom instead of ten, and immune to a step —
 #:                  and it loses because MR measures *one-step* variation and
 #:                  this series has slow structure that a one-step difference
 #:                  cannot see. Kept because that is worth knowing.
 #:
-#: The residual 4.3x is measured rather than tuned away, and its two causes are
-#: separated: with a spread estimated from the *whole* series (60+ points, so
-#: essentially no estimation error) the rate is still 0.0055 — 2.0x — because
-#: the series is mildly heavy-tailed (kurtosis 3.36) and serially correlated
-#: (lag-1 +0.17). The rest is what a ten-point baseline costs even after the
-#: Student-t correction below, since correlated points carry less information
-#: than their count suggests. The fab itself is *not* the cause and that was
-#: checked: per-quarter median spreads are 0.01309 / 0.01358 / 0.01340 /
-#: 0.01350, i.e. stationary to within 3%.
+#: **Where the remaining 2.2x comes from, and where it does not.** The chart is
+#: correct when its spread is: judging the same points against a spread
+#: estimated from the *whole* series — enough points that estimation error is
+#: negligible — reads 0.0025, which is 0.94x nominal, i.e. exactly right. So
+#: neither the fab nor the rule is the problem, and two suspects were checked
+#: and cleared: the fab is stationary (per-quarter median spreads 0.01309 /
+#: 0.01358 / 0.01340 / 0.01350) and the series is only mildly heavy-tailed
+#: (kurtosis median 3.09 against 3).
+#:
+#: What is left is the price of estimating a spread from about a dozen baseline
+#: days of a *serially correlated* series (lag-1 +0.19). `effective_size` pays
+#: most of it — without that discount the same measurement reads 0.0160, 5.9x —
+#: and the rest is the irreducible cost of a short Phase I window.
 #:
 #: Widening the limits until the rate matched would be fitting a threshold to
 #: the very worlds it judges — the circularity ADR-027 §2 rejected as option A.
-#: So the limit stays the fab's own three-sigma convention and the realized
-#: rate is published instead. This is why a monitor signal is a **prompt** and
-#: not a claim: the one claim this project makes about a dataset is the
-#: engine's abstention, which is calibrated exactly and by a different method.
+#: So the limit stays the fab's own three-sigma convention, the two corrections
+#: applied are both derivations rather than fits, and the realized rate is
+#: published. This is why a monitor signal is a **prompt** and not a claim: the
+#: one claim this project makes about a dataset is the engine's abstention,
+#: which is calibrated exactly and by a different method.
 CHART_RULES = ("individuals", "xbar", "moving_range")
 DEFAULT_CHART_RULE = "individuals"
 
@@ -299,6 +306,40 @@ def t_limit(degrees_of_freedom: int, alpha: float = ACTION_ALPHA) -> float:
     return (low + high) / 2.0
 
 
+def lag_one_autocorrelation(values: Sequence[float]) -> float:
+    """The series' own lag-1 correlation, used to discount its sample size.
+
+    A daily series of this fab is not independent day to day — a lot's wafers
+    share a lot-level offset and run across consecutive days — so a baseline of
+    *k* points carries less information than *k* independent ones. Estimated
+    from the whole series rather than from the baseline window alone, because
+    it is a second-order property that a level shift barely moves and a
+    twelve-point estimate of it would be noise.
+    """
+    if len(values) < 5:
+        return 0.0
+    mean = st.fmean(values)
+    denominator = sum((value - mean) ** 2 for value in values)
+    if denominator <= 0:
+        return 0.0
+    numerator = sum((values[index] - mean) * (values[index + 1] - mean)
+                    for index in range(len(values) - 1))
+    return numerator / denominator
+
+
+def effective_size(baseline_points: int, autocorrelation: float) -> int:
+    """`k` discounted for serial correlation: k(1-rho)/(1+rho).
+
+    The standard effective-sample-size correction for an AR(1)-like series.
+    Negative correlation is not credited — it would *widen* the effective
+    sample and buy tighter limits from a series that happens to zigzag — and
+    the discount is capped so one pathological series cannot reduce itself to
+    nothing.
+    """
+    rho = min(max(autocorrelation, 0.0), 0.8)
+    return max(4, int(round(baseline_points * (1.0 - rho) / (1.0 + rho))))
+
+
 def limit_inflation(baseline_points: int, alpha: float = ACTION_ALPHA
                     ) -> float:
     """How much wider the limits must be because the spread was *estimated*.
@@ -366,7 +407,14 @@ def _chart_of(days: Sequence[int], values: Sequence[float],
     if len(baseline) < MIN_BASELINE_POINTS:
         return None
 
-    inflation = limit_inflation(len(baseline))
+    # The baseline's *effective* size, not its point count: this fab's daily
+    # series are serially correlated, so k points carry less information than k
+    # independent ones and a Student-t correction computed from k - 1 is too
+    # small. Measured on twelve fault-free worlds: the single-point rule reads
+    # 5.93x nominal without this and 2.21x with it.
+    effective = effective_size(len(baseline),
+                               lag_one_autocorrelation(list(values)))
+    inflation = limit_inflation(effective)
     if not math.isfinite(inflation):
         return None
 
@@ -383,7 +431,9 @@ def _chart_of(days: Sequence[int], values: Sequence[float],
         chart = Chart(centre=centre, spread=spread,
                       baseline_points=len(baseline),
                       baseline_last_day=int(cut),
-                      inflation=limit_inflation(len(ranges) + 1))
+                      inflation=limit_inflation(effective_size(
+                          len(ranges) + 1,
+                          lag_one_autocorrelation(list(values)))))
         return chart, {}
 
     if rule == "individuals":

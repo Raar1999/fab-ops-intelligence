@@ -20,17 +20,20 @@ hidden plane is not reachable by an accident of signature.
 three-sigma action convention, and a healthy fab still produces signals — its
 chambers differ, its weeks differ, and rules F10/F11 put permanent benign
 offsets on every chamber by design. On twelve fault-free worlds the default
-configuration produces **116 signals per dataset** and its single-point rule
-fires at **0.0117 per charted point against a nominal 0.0027**; the inflation
-is measured, its causes are separated in `model.CHART_RULES`, and it was
-deliberately not tuned away, because widening a limit until it matched the
-worlds it judges is the circularity ADR-027 rejected.
+configuration produces **42 signals per dataset** and its single-point rule
+fires at **0.0060 per charted point against a nominal 0.0027**; the inflation
+is measured, its cause is isolated in `model.CHART_RULES` — a spread estimated
+from a dozen days of a serially correlated series, since the same chart reads
+0.94x nominal when its spread is well estimated — and it was deliberately not
+tuned away, because widening a limit until it matched the worlds it judges is
+the circularity ADR-027 rejected.
 
 So a signal is a **prompt to look**, not a claim.
 
 **And a signal count is not attribution — measured, because the opposite looked
-true.** On the demo at seed 42 the planted chamber does lead the fab, 52
-signals against 18, and it would have been easy to ship that as a capability.
+true.** On the demo at seed 42 the planted chamber does lead the fab, 10 of its
+23 chamber-grain signals against the runner-up's 6, and it would have been easy
+to ship that as a capability.
 Running the same instrument over six library scenarios refutes it: one chamber
 (`ETCH-02/B` on this world at this seed) leads in four of them, including three
 where the fault was planted somewhere else entirely, and two planted chambers
@@ -44,8 +47,10 @@ several-fold between chambers. The Student-t inflation prices that correctly
 The counter-design was measured too and is worse: charting each run instead of
 each day gives every chart sixty baseline points instead of a dozen, and its
 realized rate is 0.032 — twelve times nominal — because a lot's wafers share a
-lot-level offset, so one unusual lot produces a run of alarms. Day-grain
-aggregation is the better instrument and the concentration is the price.
+lot-level offset, so one unusual lot produces a run of alarms. That serial
+dependence is the same one `effective_size` discounts for; at run grain it is
+strong enough to overwhelm the extra points. Day-grain aggregation is the better
+instrument and the concentration is the price.
 
 Attribution therefore stays where it is calibrated: `fabops.diagnosis`, which
 compares a candidate against a permutation of the candidate label inside the
@@ -54,13 +59,11 @@ acceptance restatement it forced.
 """
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from fabops.monitors.defect import monitor_defects
 from fabops.monitors.equipment import monitor_equipment
-from fabops.monitors.model import (BASELINE_FRACTION, CHART_RULES,
-                                   DEFAULT_CHART_RULE, MIN_PEERS, SIGMA_LIMIT,
+from fabops.monitors.model import (CHART_RULES, DEFAULT_CHART_RULE,
                                    MonitorReport, Signal, order_signals)
 from fabops.monitors.process import monitor_process
 from fabops.monitors.yield_ import monitor_yield
@@ -79,7 +82,14 @@ __all__ = [
 
 #: Moves whenever a rule, a limit or a baseline convention changes — anything
 #: that could alter which signals a fixed database produces.
-MONITOR_VERSION = "1.0.0"
+#:
+#: 1.0.0 -> 1.1.0 for the effective-sample-size correction: a baseline of k
+#: serially correlated days carries less information than k independent ones, so
+#: the Student-t inflation is computed from the discounted count. It moves every
+#: chart's limits and therefore every report — measured on twelve fault-free
+#: worlds, the single-point rule went from 5.9x its nominal rate to 2.2x, and
+#: the demo's planted chamber still leads its fab.
+MONITOR_VERSION = "1.1.0"
 MONITOR = f"fabops.monitors/{MONITOR_VERSION}"
 
 FAMILIES = ("process", "equipment", "yield", "defect")

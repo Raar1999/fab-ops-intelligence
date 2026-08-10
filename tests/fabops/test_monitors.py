@@ -170,7 +170,7 @@ def test_a_signal_count_is_not_attribution(library):
     """The finding that stopped a capability claim, pinned so it cannot be
     quietly re-made.
 
-    On the demo the planted chamber leads the fab 52 signals to 18, and that
+    On the demo the planted chamber leads the fab by a clear margin, and that
     reads exactly like attribution. Across the library it is not: the *same*
     chamber leads on scenarios whose fault is planted elsewhere, because a
     chart whose baseline fortnight happened to be quiet keeps tight limits
@@ -272,22 +272,70 @@ def test_the_default_chart_rule_is_the_best_calibrated_one(null_population):
     """The measurement that chose the default, re-run on the suite's own
     fault-free population and pinned in both directions.
 
-    Measured when the rule was chosen, on twelve independent fault-free worlds:
-    `individuals` 116 signals per dataset, `xbar` 135, `moving_range` 233. The
-    default must stay the quietest, and the numbers must stay in the band the
-    module's docstring publishes — a monitor whose realized rate drifted would
-    make every statement about it wrong without failing anything else.
+    It is scored on the **single-point rule's per-point rate**, not on a total
+    signal count. The count pools six rules with different nominal rates, and
+    on one eight-world sample it put `xbar` 2% ahead of `individuals` while the
+    per-point rate separated them by 50% — a selection criterion that can invert
+    on sampling noise is not a criterion.
+
+    Measured when the rule was chosen, on twelve independent fault-free worlds
+    against a nominal 0.0027: `individuals` 0.0060, `xbar` 0.0088,
+    `moving_range` 0.0162. The default must stay the quietest, and it must stay
+    inside the band the module publishes — a rate that drifted would make every
+    statement about this instrument wrong without failing anything else.
     """
-    sample = [record["db_path"] for record in null_population[:8]]
-    means = {}
+    from fabops.monitors.model import (ACTION_ALPHA, charted_points)
+    from fabops.monitors.process import channel_series, channels_of
+    from fabops.semantic import open_layer
+
+    sample = [record["db_path"] for record in null_population[:6]]
+    rates = {}
     for rule in CHART_RULES:
-        counts = [len(monitor(path, chart_rule=rule).signals)
-                  for path in sample]
-        means[rule] = st.fmean(counts)
-    assert means[DEFAULT_CHART_RULE] == min(means.values()), means
-    assert 60 <= means[DEFAULT_CHART_RULE] <= 200, (
-        f"the default rule's fault-free signal count moved out of the band the "
-        f"module documents: {means}")
+        hits = points = 0
+        for path in sample:
+            report = monitor(path, chart_rule=rule)
+            hits += sum(1 for signal in report.signals
+                        if signal.rule == "we1_beyond_3_sigma"
+                        and signal.family == "process")
+            connection = open_layer(path)
+            try:
+                horizon = int(connection.execute(
+                    "SELECT horizon_days FROM dataset_meta").fetchone()[0])
+                for channel in channels_of(connection):
+                    for series in channel_series(connection, channel):
+                        points += charted_points(series, horizon, rule)
+            finally:
+                connection.close()
+        assert points > 1000, (rule, points)
+        rates[rule] = hits / points
+
+    assert rates[DEFAULT_CHART_RULE] == min(rates.values()), rates
+    assert ACTION_ALPHA < rates[DEFAULT_CHART_RULE] <= 4 * ACTION_ALPHA, (
+        f"the default rule's fault-free rate moved out of the band the module "
+        f"documents: {rates}")
+
+
+def test_the_effective_size_discount_is_what_pays_for_the_correlation():
+    """The correction that took the rate from 5.9x nominal to 2.2x.
+
+    A baseline of k serially correlated days carries less information than k
+    independent ones. Negative correlation is deliberately not credited — it
+    would widen the effective sample and buy *tighter* limits from a series
+    that happens to zigzag.
+    """
+    from fabops.monitors.model import effective_size, lag_one_autocorrelation
+
+    assert effective_size(12, 0.0) == 12
+    assert effective_size(12, 0.19) < 12
+    assert effective_size(12, -0.5) == 12, "negative correlation was credited"
+    assert effective_size(12, 0.99) >= 4, "the discount is not floored"
+    assert limit_inflation(effective_size(12, 0.19)) > limit_inflation(12)
+
+    rising = [float(index) for index in range(20)]
+    alternating = [(-1.0) ** index for index in range(20)]
+    assert lag_one_autocorrelation(rising) > 0.5
+    assert lag_one_autocorrelation(alternating) < -0.5
+    assert lag_one_autocorrelation([1.0, 1.0]) == 0.0
 
 
 def test_the_baseline_convention_is_declared_and_used(demo_report):

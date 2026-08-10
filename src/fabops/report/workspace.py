@@ -16,7 +16,6 @@ returns plain dictionaries and lists.
 """
 from __future__ import annotations
 
-import math
 import sqlite3
 import statistics as st
 from pathlib import Path
@@ -45,16 +44,26 @@ WORKSPACE_PAGES = ("Fab Today", "Process", "Equipment", "Yield",
 
 
 def dataset_summary(connection: sqlite3.Connection) -> dict[str, Any]:
+    """Provenance, as far as the analysis plane is entitled to read it.
+
+    The generator's own version is a column of `dataset_meta` and is
+    deliberately **not** read here. `fabops` may not name the generator — the
+    code-plane lint forbids the token outright, and softening a working guard
+    to put one more line on a screen is the wrong trade. What a consumer
+    actually needs for compatibility is the *schema* version, which is here;
+    what an auditor needs is in the dataset's own `manifest.json`, which the
+    evaluator reads and this plane does not.
+    """
     row = connection.execute(
-        "SELECT dataset_id, schema_version, fabsim_version, time_origin, "
-        "horizon_days FROM dataset_meta").fetchone()
+        "SELECT dataset_id, schema_version, time_origin, horizon_days "
+        "FROM dataset_meta").fetchone()
     counts = {
         table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in ("lots", "wafers", "runs", "defects", "wafer_yield",
                       "alarms", "maintenance")}
     return {"dataset_id": row[0], "schema_version": row[1],
-            "fabsim_version": row[2], "time_origin": row[3],
-            "horizon_days": int(row[4]), "counts": counts,
+            "time_origin": row[2], "horizon_days": int(row[3]),
+            "counts": counts,
             "semantic_layer": f"fabops.semantic/{LAYER_VERSION}"}
 
 
@@ -286,13 +295,13 @@ def wafer_detail(connection: sqlite3.Connection, wafer_id: int
                WHERE wafer_id = ? ORDER BY die_y, die_x""", (wafer_id,))]
     row = connection.execute("""
         SELECT product_name, yield_pct, attainment_pts, total_die, good_die,
-               target_yield_pct FROM fact_yield WHERE wafer_id = ?""",
-        (wafer_id,)).fetchone()
+               target_yield_pct FROM fact_yield WHERE wafer_id = ?
+        ORDER BY yield_id""", (wafer_id,)).fetchone()
     radius = connection.execute("""
         SELECT p.wafer_size_mm / 2.0 FROM wafers w
         JOIN lots l ON l.lot_id = w.lot_id
         JOIN products p ON p.product_id = l.product_id
-        WHERE w.wafer_id = ?""", (wafer_id,)).fetchone()
+        WHERE w.wafer_id = ? ORDER BY w.wafer_id""", (wafer_id,)).fetchone()
     return {
         "wafer_id": wafer_id,
         "product_name": row[0] if row else None,

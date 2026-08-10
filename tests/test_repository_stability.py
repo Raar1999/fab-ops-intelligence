@@ -178,7 +178,7 @@ def test_every_console_script_resolves_to_something_callable(pyproject):
     import importlib
 
     scripts = pyproject["project"]["scripts"]
-    assert len(scripts) >= 7, scripts
+    assert len(scripts) >= 6, scripts
     for name, target in sorted(scripts.items()):
         module, _, attribute = target.partition(":")
         function = getattr(importlib.import_module(module), attribute)
@@ -307,3 +307,21 @@ def test_the_readme_names_every_console_script(pyproject):
     readme = (REPO / "README.md").read_text(encoding="utf-8")
     for name in pyproject["project"]["scripts"]:
         assert name in readme, name
+
+
+def test_the_maintainer_scripts_are_at_the_root_and_not_console_scripts():
+    """Two scripts write into the repository and neither is installed.
+
+    `build_notebook.py` regenerates the notebook and `publish_readme.py`
+    regenerates the README's benchmark section. Both live at the root rather
+    than inside a package, and `publish_readme.py` is there for a reason worth
+    keeping visible: ADR-024 §1 makes "`fabeval` writes nothing" an absolute,
+    lexically checkable rule, so the rendering is in `fabeval.publish` and the
+    writing is here. An exception for one well-behaved caller is how a rule
+    like that stops being one.
+    """
+    import importlib
+
+    for name in ("build_notebook", "publish_readme"):
+        assert (REPO / f"{name}.py").exists(), name
+    assert callable(importlib.import_module("publish_readme").main)

@@ -23,7 +23,7 @@ help:
 	@echo "  report         emit the full decision artifact for DATASET"
 	@echo "  workspace      launch the investigation workspace on DATASET"
 	@echo "  benchmark      build a population and score the engine (BENCH_ROOT=)"
-	@echo "  publish        regenerate the README benchmark section"
+	@echo "  publish        regenerate the README benchmark section from it"
 	@echo ""
 	@echo " the legacy v1 demo (ADR-010: kept until something is better on its surface)"
 	@echo "  setup          build data/fab.db + star model + views"
@@ -71,10 +71,10 @@ workspace: require-dataset
 
 benchmark:
 	fabops-benchmark --root "$(BENCH_ROOT)" --population both \
-	                 --emit docs/benchmark_results.json
+	                 --emit-json > docs/benchmark_results.json
 
 publish:
-	fabops-publish --results docs/benchmark_results.json --readme README.md
+	python publish_readme.py
 
 # ------------------------------------------------------- the legacy v1 demo
 

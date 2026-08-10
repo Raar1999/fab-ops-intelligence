@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Sequence
 
 __all__ = ["LotExposure", "SUBJECT_KINDS", "lot_exposure", "exposed_wafers",
            "subject_predicate"]

@@ -50,6 +50,9 @@ def test_every_page_has_a_payload(loaded):
                 "investigation", "wafers", "monitor"):
         assert loaded[key], key
     assert loaded["dataset"]["schema_version"] == "2.0"
+    assert "fabsim_version" not in loaded["dataset"], (
+        "the analysis plane read the generator's version; the code-plane lint "
+        "forbids naming it and the manifest already carries it")
     assert loaded["generated_by"]["engine"].startswith("fabops.diagnosis/")
 
 
