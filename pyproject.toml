@@ -52,6 +52,11 @@ fabops-report = "fabops.report.cli:main"
 # the evaluator rather than for the engine — it reads both planes, which
 # neither of the two above may do.
 fabops-benchmark = "fabeval.benchmark:main"
+# Renders the README's benchmark section from a committed results document.
+# It measures nothing: `fabops-benchmark --emit` produces the numbers and this
+# turns them into prose, so a public figure and a measured one cannot part
+# company without a test noticing.
+fabops-publish = "fabeval.publish:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

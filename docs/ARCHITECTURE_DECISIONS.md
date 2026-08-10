@@ -816,3 +816,126 @@ median onset error (d)    7.0                      10.0
 **11. What changed, and what did not.** Changed: seven scenario configs and the maintainers' index; `fabeval.population` (scenario split, `role_of`, strengthened `claimable`); `fabeval.benchmark` (new); `fabeval.diagnosisscore` (multi-planted scoring — an assumption the adapter carried silently until a two-fault scenario existed, whose failure mode was quiet); `fabeval.fixtures` (seven expectations, two structural checks); `ORDER BY` in `fabops.diagnosis.channels`, `fabeval.queries`, `fabeval.leakage`, `fabeval.acceptance`; the engine version; and the declaration comments in `anchors.py`, `decide.py` and `statistics.py`. **Unchanged: `src/fabsim/` entirely, every world constant, every severity, every threshold, the anchor rule, the default statistic, the level, `app/`, `sql/`, `data/`, and the legacy v1 surfaces.** Nothing became PASS, nothing became BLOCKED, and the acceptance matrix reads exactly as ADR-030 left it.
 
 **12. What Phase 6 deliberately did not do.** It did not make the engine stronger. Every lever that would have — a multi-anchor grid, the pooled-denominator statistic, `trend_contrast`, a higher level — was measured, and each buys detections by spending calibration the architecture ranks above them. Whether that ordering is the right one for a fab is a question a cost model would answer and this project does not have one; whether the *world* should be recalibrated so a single channel carries more signal is the physics gate ADR-026 §1 and ADR-028 §7 have both already deferred; and whether the stratum definition should widen is §9's. All three are now blocked on something specific rather than on the absence of a benchmark, which is the state Phase 6 existed to reach.
+
+## ADR-032 — The semantic layer is read-only by construction, target-normalized by default, and ships no compatibility view
+
+**Status: Accepted (2026-08-10), implementing `EXPANSION_ROADMAP` Phase 2.** `src/fabops/semantic/` gives schema v2 the analytical vocabulary the audit asked for: an exposure spine, four facts, a daily equipment rollup, and the monitoring, exposure and commonality views built on them. **No `src/fabsim/` change, no world constant, no scenario edit, and no change to any number the engine or the evaluator produces** — the layer is new surface over unchanged data. Four decisions.
+
+**1. The layer cannot modify the dataset it reads, and that is enforced by the connection rather than by care.** The database is opened with SQLite's `mode=ro` URI and every view is a `CREATE TEMP VIEW`, which lands in the connection's own schema. Installing the layer therefore leaves `fab.db` byte-identical, and a test hashes the file before and after to prove it.
+
+This is not fastidiousness. The manifest records a SHA-256 **per emitted file**, including `fab.db` (ADR-023), and `fabeval` scores that file afterwards. A plain `CREATE VIEW` would write into the artifact, break its recorded hash, and do so silently — every benchmark result computed after an analyst had once opened the dataset would carry a provenance claim that no longer held. The read-only connection is also what makes "`fabeval` writes nothing" survive having a view layer at all.
+
+**2. Yield is charted on attainment, and the raw mean is kept beside it.** Products in this world differ by up to ten points of declared target, so a fab-wide mean moves when the mix moves; the audit verified 24-point swings in v1's `v_weekly_yield` that were mix and nothing else. Subtracting each product's own target is the smallest correction that makes two weeks comparable.
+
+The correction is *measured* rather than asserted: a test rewrites every wafer's yield to exactly its own product's target — a fab that performed identically everywhere by construction — and requires the normalized weekly series to be flat to 1e-9 while the raw one still moves by more than a point. The second half is what stops the test passing on a dataset with no mix shift to remove.
+
+**3. There is no default database, and that is the specific hazard this layer had to avoid.** `fabops.config.DB_PATH` names the **legacy v1** database. A v2 surface that defaulted to it would answer v2 questions about a different fab, with no error anywhere and no column missing — v1 and v2 deliberately share table names where the intent carries over (`SCHEMA_V2_DESIGN.md` §6). `open_layer` therefore takes a required path, does not import `fabops.config`, and rejects a database that does not declare schema `2.0`. Two tests pin all three.
+
+**4. No `v_gate_etch_runs` compatibility view ships, and the roadmap's acceptance line is answered differently from the way it is worded.** Phase 2 says "the dashboard and notebook run unchanged on the new layer (compat views kept during migration)". Those surfaces were never migrated and under ADR-010 they will not be: they read the schema v1 database, and their replacement on that surface would have to be strictly better *on it*. A compat view on v2 would therefore have exactly no consumer, and a view with no consumer is dead surface — the thing a stability audit removes, not adds.
+
+What the audit actually asked for is delivered: `step_id = 4` hard-coded in nine places became one view resolving a step by *name* in Phase 0, and the generalization of that is that the spine carries `step_name` and a caller filters on it. Any step is addressable; no step needs a view of its own.
+
+**One measured difference recorded rather than smoothed over.** `fabeval.queries.chamber_edge_defect_share` pools the etch *operation* and counts one row per (defect, run) pair, so a wafer that met a chamber at both etch steps weighs double; the layer's own view is per step and counts a wafer once. Both are defensible and they are not the same number. The evaluator's instrument is fixed and predates the method (ADR-031 §3), so it was not touched; instead a test reproduces the evaluator's grain **from the layer's facts** — proving the facts are faithful — and then checks the layer's own share is close but deliberately not identical, so neither definition can drift into the other unnoticed.
+
+## ADR-033 — The monitors publish their false-alarm rate instead of tuning it, and a signal count is measured not to be attribution
+
+**Status: Accepted (2026-08-10), implementing `EXPANSION_ROADMAP` Phase 3.** Four monitor families over one observable dataset (`src/fabops/monitors/`), and `fabops-monitor`. **No `src/fabsim/` change, no world constant, no threshold moved anywhere else in the repository.** Six findings, and the last two are the ones that matter.
+
+**1. What the instrument is.** Process (Western Electric rules 1–4, EWMA, tabular CUSUM), equipment (utilization, availability, MTBF, MTTR, degradation trend, maintenance effect), yield (target-normalized attainment, per product against its own standard error), defect (rate movers, and per-wafer spatial signature scores: edge share, centre share, Clark–Evans clustering, covariance linearity). Every chart is drawn on the **peer-differenced** daily series against limits **frozen** in a declared baseline window — the first because every chamber shares a fab-week wander and a chart on the raw series charts the week, the second for the reason ADR-017 §3 gives on the simulator's side: a spread that kept adapting would widen to accommodate a slow ramp and a fault would become invisible by being persistent.
+
+**2. A short baseline is a five-fold error and it is corrected exactly, not approximately.** A chart estimating its spread from about a dozen days is judging new points against an estimate that is itself uncertain by roughly a quarter. Measured before the correction on twelve fault-free worlds: the nominal three-sigma single-point rule fired at **0.0150 per point against 0.0027** — 73.6 violations per dataset against 11.3 expected. The correct reference is Student's t on the baseline's own degrees of freedom, widened by `sqrt(1 + 1/k)` for the centre's uncertainty, and that is what ships.
+
+  The t quantile is computed from the regularized incomplete beta because this repository does not take a numerical dependency for one function, and it is pinned against five published table values. That test is not ceremony: the first implementation applied its continued fraction's first partial numerator twice, was **correct at ten degrees of freedom and wrong at fifteen**, and would have shipped a plausible-looking inflation factor that mis-sized every chart in the fab.
+
+**3. Three limit conventions were built and the calibrated one wins, with the other two kept and their cost recorded.** The same measurement, twelve fault-free worlds, 12,016 charted points, as the single-point rule's realized per-point rate:
+
+```
+individuals    0.0117  (4.3x nominal)   one constant spread from the baseline   <- shipped
+xbar           0.0189  (7.0x)           limits scaled by 1/sqrt(n) per day
+moving_range   0.0201  (7.5x)           MR-bar / 1.128 over the whole horizon
+```
+
+  `moving_range` was expected to win — sixty degrees of freedom instead of a dozen, and immune to a step — and it loses because a moving range measures *one-step* variation while this series carries slow structure a one-step difference cannot see. `xbar` loses because day-to-day variation here is not within-day sampling noise, so scaling by the subgroup size buys the tightest limits on the days that least deserve them. Both stay registered with their numbers, on the precedent ADR-031 §6 set for `trend_contrast`: a registry member with a measured reason is worth more than one with none.
+
+**4. The residual 4.3× is published, not tuned away, and its causes are separated.** With a spread estimated from the *whole* series — sixty-odd points, so essentially no estimation error — the rate is still **0.0055, 2.0× nominal**, because the series is mildly heavy-tailed (kurtosis 3.36) and serially correlated (lag-1 +0.17). The remainder is what a twelve-point baseline costs even after an exact t correction, since correlated points carry less information than their count suggests.
+
+  The obvious suspect was checked and cleared: the fab is **not** drifting. Per-quarter median spreads over the same worlds are 0.01309 / 0.01358 / 0.01340 / 0.01350 — stationary to within 3% — and the 1.23 "later window is noisier" ratio an earlier measurement reported is the right-skew of a ratio of two small-sample variance estimates, not a property of the fab.
+
+  Widening the limits until the realized rate matched would be fitting a threshold to the very worlds it judges, which ADR-027 §2 rejected as option A and called circular. So the limit stays the fab's own three-sigma action convention — the multiple eight of the nine `alarms.codes` declare — and the realized rate is published in the module, in the report's settings, and in the README's limitations.
+
+**5. A signal count is not attribution. This is the finding, and it was nearly shipped as a capability.** On the demo at seed 42 the planted chamber leads the fab 52 signals to 18, which reads exactly like attribution and would have made a good sentence. Run over six library scenarios it does not hold:
+
+```
+scenario                        planted        leader        planted signals
+chamber_edge_uniformity         ETCH-02/B      ETCH-02/B     52 of 99
+confounded_chamber_vs_product   ETCH-01/A      ETCH-01/A     84 of 159
+parameter_drift                 ETCH-03/A      ETCH-02/B     17   (rank 3)
+fault_repair_recovery           CVD-01/A       ETCH-02/B      0
+late_gas_flow_step              ETCH-01/B      ETCH-02/B      0
+tool_wide_drift                 ETCH-03 (tool) ETCH-02/B      -
+```
+
+  **One chamber leads four of six, and three of those plant their fault elsewhere.** The cause was measured rather than guessed: the per-chamber *denominators* are equal to within 30% (168–228 charted points each), so this is not an exposure artefact — it is that a chart whose dozen baseline days happened to be quiet keeps tight limits for the rest of the horizon, and that luck varies four- to five-fold between chambers. The Student-t inflation prices that correctly *on average over series* and cannot make it uniform *across* them.
+
+  The counter-design was measured too and is worse: charting each **run** instead of each day gives every chart sixty baseline points, and reads **0.032 — twelve times nominal — with concentration unchanged**, because a lot's wafers share a lot-level offset so one unusual lot produces a run of alarms. Day-grain aggregation is the better instrument and the concentration is its price.
+
+  What ships instead: the process family reports each chamber's signal count **with its denominator and a note saying it is not a ranking**, and attribution stays where it is calibrated — `fabops.diagnosis`, which compares a candidate against a permutation of the candidate label inside the same dataset. A test asserts the refutation *in both directions*: the busiest chamber must not be the planted one on every scenario (which would be attribution, unbenchmarked), and the demo's own ranking must still hold (or the monitors have stopped responding to the one fault they were measured against).
+
+  This is the fifth time a criterion in this project has been checked against the distribution of its own statistic and failed — after A6's floor, L7's constant, A9's cohort-yield ranking and A9's wafer map. It is the first time the criterion was one this run had just written.
+
+**6. Phase 3's "quiet on the null scenario" is restated, for the same reason.** Taken literally it is unsatisfiable by a correct instrument: this fab's fault-free worlds alarm, escalate and get repaired **by design** (`ANTI_LEAKAGE_DESIGN.md` §3.2), and rule F11 puts a permanent benign offset on every chamber. A monitor silent on such a world would be a monitor that cannot fire, and comparing one null world against one faulted world is the one-draw trap ADR-025 §5 fell into — measured here too, where a null world's worst chamber (67 signals) exceeds the demo's planted chamber (52).
+
+  The criterion now reads: **the charts must fire on a healthy fab, and their realized rate must be measured on a population of them and stay where it was measured.** Both halves are tests.
+
+## ADR-034 — Decision support wraps the investigation rather than extending it, and never invents a subject
+
+**Status: Accepted (2026-08-10), implementing `EXPANSION_ROADMAP` Phase 7.** `fabops.impact`, `fabops.actions`, `fabops.report` and `fabops-report`. **No `src/fabsim/` change, no engine change, and the `fabops.investigation/v1` artifact is byte-identical to what `diagnose` already produced.** Five decisions.
+
+**1. The artifact conflict, and which document governs.** Two governing documents describe an exported artifact under one name. `FABOPS_VS_FABKG_BOUNDARY.md` §4 — a Phase 0 audit-era sketch — draws `fabops.investigation/v1` with `excursion`, `hypotheses`, `conclusion`, `impact`, `actions`, `provenance`. `DIAGNOSIS_CONTRACT.md` §3 — written four gates later and far more specific — declares `fabops.investigation/v1` to be exactly what `diagnose(db_path)` returns, and ADR-029 §7 closed that as a decision.
+
+  **The contract governs, and the decision-support document takes a new name: `fabops.report/v1`, which embeds the investigation verbatim.** Three grounds, none of them preference. It is the ordering ADR-029 §6 already used to settle the roadmap's `investigate <excursion>` sketch against the same contract. `diagnose` *cannot* compute the added fields — it is handed a database path and impact needs a **subject**, which is a conclusion rather than an input — so extending the schema would make one version number describe two different documents depending on which function produced it. And ADR-029 §8's fifth bullet already refused to add a redundant field to an export contract other systems version against; this is that principle applied to a whole section rather than a field. The boundary document's §4 sketch is annotated rather than rewritten, per ADR-001.
+
+**2. A loss estimate never stands alone.** Every `ImpactEstimate` carries the standard error of the difference in means **and** the subject's leave-one-out standing among its same-role peers, and `distinguishable_from_benign_variation` is that judgement made once, in one place, at the fab's own three-sigma action convention. ADR-028 measured the between-tool benign spread on cohort yield at 0.410 points against a mechanism-attributable effect of 0.058, and measured each etch tool to be "worst on cohort yield" about a third of the time on fault-free worlds. A die count printed without that reference is benign variation with a currency sign in front of it, which is the audited v1's mistake wearing decimals.
+
+  The estimator is deliberately the *same* one `v_chamber_yield_deficit` implements — within product, wafer-weighted, with the same support floors — and a test asserts the two agree to 1e-9, so a reader who checks the view and a reader who reads the module cannot get different answers.
+
+**3. The step is chosen by exposure, never by outcome.** A chamber that runs two steps has two cohorts. Choosing the step where the deficit came out largest would be a per-subject maximization — precisely the selection ADR-029 §2 measured and rejected for the engine's anchors, where a benign candidate wins a maximization more often than a faulted one does. Exposure is fixed by routing before any yield exists, so it cannot be chosen to flatter a result.
+
+**4. The knowledge table is a data file, and it maps evidence onto *checks* rather than onto a mechanism.** `FABOPS_VS_FABKG_BOUNDARY.md` §3 permits exactly this — "a small, versioned local knowledge table (fault class → expected signatures → recommended checks)" — and §4 makes it the import half of the FabKG contract. So it ships as `fabops.knowledge/v1` JSON: an absent replacement is the ordinary case, a valid one is a file swap rather than a release, and an invalid one falls back to the built-in table **and records why in the report's provenance**. The contract says "ignored otherwise"; ignoring it silently would let a fab run for months on a table that never loaded, so the fallback is reported rather than swallowed — stricter than asked, looser in nothing.
+
+  What it may not do is name a mechanism. No observable channel in schema v2 identifies which mechanism acted (`DIAGNOSIS_CONTRACT.md` §5.2), so a recommendation that named one would be matching a catalogue. A test scans the shipped table for the mechanism and latent vocabulary and fails on any of it.
+
+**5. The subject is never invented, and this is the stage where inventing one would be easiest.** When the investigation abstains — which at the declared level is what it does on every dataset this project can build — there is no subject, `impact` and `containment` are `null`, and the actions say why. A document feels incomplete without a name, and supplying the least innocent candidate to fill the space is exactly the audited failure the whole project exists to remove.
+
+  A human may still supply one, and the artifact records `source: operator` beside it with the sentence "this report quantifies the consequence of acting on it and does not claim the evidence names it". A reader six months later cannot tell a concluded subject from a supplied one by the name alone, so the artifact says which it was.
+
+## ADR-035 — The workspace renders and does not decide; the public numbers are generated from the measurement and guarded against drift
+
+**Status: Accepted (2026-08-10), implementing `EXPANSION_ROADMAP` Phases 8 and 9, and closing the roadmap.** `app/investigation_workspace.py` over `fabops.report.workspace` and `fabops.report.figures`; `fabeval.publish` and `fabops-publish`. **No `src/fabsim/` change, no engine change, no threshold moved.** Five decisions.
+
+**1. The workspace is a second app, not a replacement.** `DASHBOARD_AUDIT` §4's information architecture is built in full — Fab Today, Process, Equipment, Yield, the Investigation workspace, the Wafer explorer — over a **schema v2** dataset. `app/ops_dashboard.py` is untouched and still narrates the schema v1 demo. The two read different fabs, so under ADR-010 this is not a replacement "on that surface" and does not delete it. That is the same shape ADR-003's note describes for `fabops-investigate` against `fabops-diagnose`, and the same reason: a reader who types the obvious command must not get the hard-coded story while believing they ran the engine.
+
+**2. "The dashboard computes nothing" is a scan, not a promise.** The audited dashboard highlighted a row pink because `SUSPECT = "ETCH-02"` sat at module level, defaulted its map selector to that tool, and captioned the tab with the conclusion. The fix is not a better constant. A test parses the new app and fails on: any SQL, a `sqlite3` import, an import of `fabsim` or `fabeval`, an import of `fabops.config` (which holds both the legacy suspect and the legacy database path), any tool, chamber, product or mechanism literal, and any reference to `DB_PATH`. Prose is excluded from that scan by stripping docstrings, because the app's own docstring has to be able to *explain* the rule it obeys.
+
+**3. A drawn chart is the chart the decision was made on.** The workspace asks `fabops.monitors` for the series and the limits rather than recomputing something that resembles them, and two tests pin the correspondence in both directions: every reported single-point signal lands on a plotted day outside its own baseline window, and every plotted point outside the drawn limits is a reported signal. A picture that disagrees with the decision it illustrates is worse than no picture.
+
+  Two further audit findings are answered concretely. There is a time axis, drawn on **attainment** with the raw mean beside it so a reader can watch the two disagree exactly when the mix moved. And the cache is keyed on the dataset file's mtime, so rebuilding a dataset invalidates it — the audited `st.cache_data` never did, and served stale numbers until the process restarted.
+
+**4. The public numbers are generated, and a test stops them drifting.** Phase 9 asks that the README's benchmark table be "generated by `eval/`, never hand-written". A generator alone does not achieve that: a section can be generated once and then edited, and nobody notices until the harness is re-run a year later. The chain that does achieve it is three files a reviewer can open — `fabops-benchmark --emit` writes `docs/benchmark_results.json`, `fabops-publish` renders it between markers in the README, and a test re-renders the committed document and compares it against what the README actually contains. The results document carries the engine version and every engine setting, and a test asserts those are the ones the engine actually ships, so a published figure is always reproducible from the file that claims it.
+
+  It carries **no wall-clock field**, deliberately: what identifies a result is the engine and the population, and a timestamp would change on every run and make a committed file look stale when nothing had moved.
+
+**5. The library row is what a claim is permitted on, and the claim is not flattering.** `fabeval.population.claimable` requires ten scenarios *and* the declared split, and neither half of the split reaches ten alone — so the harness now also scores the pooled library, and that is the row the README's headline rests on. Re-measured end to end for this gate, and reproducing ADR-031 §8 exactly:
+
+```
+                     development (8x3)   held out (4x5)   library (12, pooled)
+datasets                 24 (21 faulted)   20 (15)          44 (36)
+false-alarm rate          0.000             0.000            0.000
+detection rate            0.000             0.000            0.000
+attribution rank 1        0.095             0.000            0.065
+attribution top 3         0.190             0.000            0.129
+mean reciprocal rank      0.228             0.075            0.179
+median onset error (d)    7.0              10.0              7.0
+```
+
+  The README now leads with capability and this table, and states in its own voice that the engine **abstains on every dataset the project can build**, that its false-alarm rate is exactly zero and so is its detection rate, and that every lever which would buy detections was measured and spends calibration this architecture ranks higher. `PROJECT_VISION` §6's rule — never claim a number you did not measure — is what makes that the only honest front page, and the guard in §4 is what keeps it true.

@@ -24,7 +24,7 @@ alternative — adding `impact` and `actions` to the investigation — would mak
 one schema name mean two things, because `diagnose` cannot compute either: it
 is handed a database path and impact needs a *subject*, which is a conclusion
 rather than an input. A report produced by the engine and one produced by this
-module would then differ while claiming the same version. ADR-032 records the
+module would then differ while claiming the same version. ADR-034 records the
 decision.
 
 **The subject is never invented.** When the investigation abstains — which at

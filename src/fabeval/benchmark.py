@@ -324,6 +324,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="override the population's declared seeds")
     parser.add_argument("--diversity-only", action="store_true",
                         help="print the coverage table and build nothing")
+    parser.add_argument("--emit", type=Path, default=None,
+                        help=("write a fabeval.results/v1 document here. It is "
+                              "what `fabops-publish` renders the README's "
+                              "benchmark section from, so a public number and "
+                              "a measured one cannot part company."))
     arguments = parser.parse_args(argv)
 
     print(render_diversity(diversity()))
@@ -338,6 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         plans.append(("held-out", HELD_OUT_SCENARIOS,
                       arguments.seeds or HELD_OUT_SEEDS))
 
+    scores = []
     for role, scenarios, seeds in plans:
         built = build_population(arguments.root / role, scenarios, seeds)
         note = ("the method was selected on this population; these numbers "
@@ -345,11 +351,55 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if role == "development" else
                 "scored with the anchor rule, statistic and level frozen "
                 "beforehand")
+        score = score_population(
+            built, f"{role} ({len(scenarios)} scenarios x {len(seeds)} seeds)",
+            notes=(note,))
+        scores.append(score)
         print()
-        print(score_population(
-            built, f"{len(scenarios)} {role} scenario(s) x {len(seeds)} seed(s)",
-            notes=(note,)).render())
+        print(score.render())
+
+    if len(scores) > 1:
+        # The whole library, scored as one population. This is the row a claim
+        # is actually permitted on: `population.claimable` requires ten
+        # scenarios *and* the declared split, and neither half of the library
+        # reaches ten on its own. Reporting only the halves would leave the
+        # project unable to state, in one sentence, what its engine does.
+        combined = Score(
+            population=f"library ({len(LIBRARY)} scenarios, both roles)",
+            outcomes=tuple(outcome for score in scores
+                           for outcome in score.outcomes),
+            notes=("development and held-out pooled; the split is reported "
+                   "separately above because a development number describes "
+                   "the fit and a held-out one describes the capability",))
+        scores.append(combined)
+        print()
+        print(combined.render())
+
+    if arguments.emit is not None:
+        _emit(arguments.emit, scores)
+        print(f"wrote {arguments.emit}")
     return 0
+
+
+def _emit(path: Path, scores: Sequence[Any]) -> None:
+    """Write the results document the public surfaces are rendered from."""
+    from fabops.diagnosis import ENGINE
+    from fabops.diagnosis.anchors import DECLARED_FRACTIONS
+    from fabops.diagnosis.decide import ALPHA, PERMUTATIONS
+    from fabops.diagnosis.statistics import DEFAULT_STATISTIC
+    from fabeval.publish import results_document
+
+    report = diversity()
+    document = results_document(
+        scores, engine=ENGINE,
+        settings={"statistic": DEFAULT_STATISTIC, "alpha": ALPHA,
+                  "permutations": PERMUTATIONS,
+                  "anchor_fractions": list(DECLARED_FRACTIONS)},
+        diversity_axes={axis: len(report.values(axis))
+                        for axis in DIVERSITY_AXES})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(document, indent=2, sort_keys=False)
+    path.write_text(payload + chr(10), encoding="utf-8")
 
 
 if __name__ == "__main__":                              # pragma: no cover

@@ -63,8 +63,18 @@ Fab Ops may emit an **investigation artifact** per completed excursion — a sch
 
 FabKG may ingest these as evidence instances. Fab Ops writes the file and is done — it has no knowledge of, or dependency on, any consumer.
 
+> **As implemented (2026-08-10, ADR-034). The sketch above is left as written; two of its names moved.** `fabops.investigation/v1` was claimed by `DIAGNOSIS_CONTRACT.md` §3 for exactly what `diagnose(db_path)` returns — ranked candidates, their evidence, the rivals considered, onsets and the abstention — and ADR-029 §7 closed that. The document with `impact`, `actions` and `provenance` in it is therefore **`fabops.report/v1`**, written by `fabops-report`, and it embeds the investigation verbatim rather than restating it.
+>
+> The other name change is `excursion`: it is not a field, because it is not an input. Its three parts are each already present and better placed — the window on the investigation, the onsets per candidate (plural, and permitted to be absent), and the scope as the ranked candidate list with its rejected rivals beside it (ADR-029 §8).
+>
+> Everything the anti-coupling rules require is unchanged and is checked: no FabKG dependency in `pyproject.toml`, no import in either direction, the schemas versioned here, and the import path exercised with a locally committed fixture file rather than any FabKG asset.
+
 ### Import: FabKG → Fab Ops (strictly optional)
 FabKG may supply **knowledge priors** as a plain data file matching Fab Ops' local knowledge-table schema (fault class → signatures → checks → typical mechanisms). Fab Ops treats it exactly like its built-in table: loaded if present and schema-valid, ignored otherwise. No FabKG runtime, format, or library leaks in.
+
+> **As implemented (2026-08-10, ADR-034).** The table is `src/fabops/actions/knowledge.json`, schema `fabops.knowledge/v1`, keyed by **evidence signature** rather than by fault class — because no observable channel in schema v2 identifies which mechanism acted, so a table keyed by mechanism would be a catalogue this project's data cannot index (`DIAGNOSIS_CONTRACT.md` §5.2). It maps *which families of evidence led* onto *what to go and look at*, and a test scans it for mechanism vocabulary and fails on any.
+>
+> One deliberate deviation from "ignored otherwise": a replacement that is present and invalid falls back to the built-in table **and records why** in the report's `provenance.knowledge.rejected_override`. Ignoring it silently would let a fab run for months on a table that never loaded. Nothing else is stricter, and nothing is looser.
 
 ### Anti-coupling rules (enforceable in review)
 1. No dependency in `requirements`/`pyproject` originating from FabKG.

@@ -39,6 +39,14 @@ Rule for every phase: the existing demo (`ETCH-02` story, README, notebook) **mu
 - **Acceptance:** dashboard and notebook run unchanged on the new layer (compat views kept during migration).
 - **Value:** the analytical vocabulary every monitor and the diagnosis engine will speak.
 
+> **Executed 2026-08-10; recorded in ADR-032. Annotated rather than rewritten, per ADR-001.** Three notes.
+>
+> **The layer is read-only, and that had to be designed rather than assumed.** `fabops.semantic` opens the dataset with SQLite's `mode=ro` URI and installs its views as `TEMP` views, so reading a dataset cannot change the bytes its manifest hashes. A plain `CREATE VIEW` would have written into a scored artifact and broken its provenance silently.
+>
+> **The compat views were not built, and their absence is the deliverable.** "The dashboard and notebook run unchanged on the new layer" assumed those surfaces would migrate; ADR-010 keeps them on the schema v1 database, so a compat view on v2 would have had no consumer at all. What the audit actually asked for — the end of `step_id = 4` — is delivered by the spine carrying `step_name`.
+>
+> **The diagnosis engine does not speak this vocabulary, and that is deliberate.** `fabops.diagnosis.channels` computes its own residuals from the base tables because its queries are version-bound to a report: a view definition changing underneath it would change reports without changing its version. The monitors, the impact estimator, the artifact and the workspace all read the layer, and a test asserts the layer and the evaluator's fixed reference queries describe the same fab.
+
 ## Phase 3 — Monitors: process + equipment + yield + defect (P1, medium each, parallelizable)
 - **Objective:** the four monitor families emit comparable, timestamped signals.
 - **Modules:** `src/fabops/monitors/{process,equipment,yield_,defect}.py` — SPC rules + EWMA/CUSUM on parameters; state/utilization/MTBF/MTTR and between-PM degradation trends; normalized yield trend; defect-rate movers + per-wafer spatial-signature scores (deepening the audited strength).
@@ -46,6 +54,12 @@ Rule for every phase: the existing demo (`ETCH-02` story, README, notebook) **mu
 - **Tests:** unit tests with synthetic series of known properties (planted drift found within k points; null series quiet).
 - **Acceptance:** `fabops monitor` lists rule hits/trends on the demo scenario; quiet on the null scenario.
 - **Value:** the platform starts *watching* the fab instead of retelling one story.
+
+> **Executed 2026-08-10; recorded in ADR-033. Annotated rather than rewritten, per ADR-001.** Two things in the acceptance line above were measured and do not hold as worded.
+>
+> **"Quiet on the null scenario" is unsatisfiable by a correct instrument.** This fab's fault-free worlds alarm, escalate and get repaired by design (`ANTI_LEAKAGE_DESIGN.md` §3.2) and rule F11 puts a permanent benign offset on every chamber, so a monitor silent on one would be a monitor that cannot fire. The criterion is restated as: the charts fire on a healthy fab, and their realized rate is *measured on a population* of them. It is 0.0117 per charted point against a declared 0.0027 — published rather than tuned away, because widening a limit until it matched the worlds it judges is the circularity ADR-027 rejected.
+>
+> **A signal count is not attribution, and the temptation to say otherwise was strong.** On the demo the planted chamber leads 52 signals to 18. Across six library scenarios the *same* chamber leads four of them, three of which plant their fault elsewhere; the cause is measured (equal denominators, unequal baseline luck) and the obvious counter-design measured worse. Monitors list what moved; `fabops.diagnosis` is what ranks.
 
 > **Superseded in part by ADR-029 (2026-08-09), for Phases 4 and 5 only. The text below is left exactly as written — it is the audit-era plan and it stays the record of what was planned.** Two things in it were measured and did not hold. (a) A *separable* detection stage is not a statistically real stage: a candidate-free fab-level detector fires on 1 of 25 held-out faults where the candidate-enumerating maximum fires on 7, and it needs roughly the candidate count in extra fault-free worlds to calibrate. (b) `investigate <excursion>` makes answer-blindness a property of the caller, since a hand-built excursion is a leakage channel through the argument list. So the **Excursion becomes a field of the `Investigation`** — window, onset, scope, as an *output* — and the public entry point is `diagnose(db_path)`, per `DIAGNOSIS_CONTRACT.md` §2. The dependency order this roadmap derives (you cannot explain a change you have not located) is unchanged in substance; locating and explaining are one deterministic computation behind one entry point. Phase 3 monitors remain a legitimate separate capability and are simply not a precondition of diagnosis.
 
@@ -89,15 +103,29 @@ Rule for every phase: the existing demo (`ETCH-02` story, README, notebook) **mu
 - **Acceptance:** `fabops report <excursion>` emits the full artifact: conclusion, evidence, impact, actions.
 - **Value:** closes the loop to "what should the engineer do next" — the question the platform exists to answer.
 
+> **Executed 2026-08-10; recorded in ADR-034. Annotated rather than rewritten, per ADR-001.** Two corrections to the modules line.
+>
+> **The artifact is `fabops.report/v1`, not `fabops.investigation/v1`.** That name was closed by `DIAGNOSIS_CONTRACT.md` §3 and ADR-029 §7 as *exactly what `diagnose(db_path)` returns*, and `diagnose` cannot compute impact — it is handed a database path and impact needs a subject, which is a conclusion. So the decision-support document wraps the investigation verbatim under a new name rather than making one version number mean two documents.
+>
+> **`fabops report <excursion>` becomes `fabops-report <db>`**, following ADR-029 §6: there is no separately callable excursion, and a subject supplied through an argument list would make answer-blindness a property of the caller. `--subject` exists for an engineer with a hypothesis of their own, and the artifact records that the subject was *supplied* rather than concluded.
+
 ## Phase 8 — Dashboard as investigation workspace (P2, medium)
 - **Objective:** rebuild per DASHBOARD_AUDIT §4: Fab Today / Process / Equipment / Yield / Investigation workspace / Wafer explorer; drill-through; renders engine output only.
 - **Dependencies:** Phases 4–7 (there must be engine output to render).
 - **Acceptance:** a user can go excursion → ranked hypotheses → evidence views → impact → actions without leaving the app; no hard-coded suspect anywhere in `app/`.
 - **Value:** the demo becomes a usable instrument; also the best interview walkthrough surface.
 
+> **Executed 2026-08-10; recorded in ADR-035. Annotated rather than rewritten, per ADR-001.** The workspace is a **second** app (`app/investigation_workspace.py`) rather than a rebuild of the first: the two read different fabs — schema v2 against schema v1 — so under ADR-010 the legacy dashboard is not replaced "on that surface" and is untouched. "No hard-coded suspect anywhere in `app/`" holds of the new app and is enforced by a scan that also rejects SQL, a database import, and any import of the module that holds the legacy suspect; it does *not* hold of `ops_dashboard.py`, which ADR-003's grandfather note governs.
+
 ## Phase 9 — Public positioning (P2, small)
 - **Objective:** re-cut the public story per PROJECT_VISION.md §5: capability + benchmark first, demo scenario second; regenerate notebook case studies from artifacts; limitations section; keep every synthetic-data disclaimer.
 - **Acceptance:** README benchmark table generated by `eval/`; the words "detects," "diagnoses," "ranks" are each backed by a measured number; nothing claims production use.
+
+> **Executed 2026-08-10; recorded in ADR-035. Annotated rather than rewritten, per ADR-001.** The acceptance is met, and the number it is met with is a zero.
+>
+> `fabops-benchmark --emit` writes `docs/benchmark_results.json`, `fabops-publish` renders the README section from it, and a test re-renders the committed document and fails if the README has drifted — a generator alone would not have been enough, because a generated section can be edited afterwards and nobody notices for a year.
+>
+> The words the acceptance names are backed as follows: **detects** — 0.000 on every population; **ranks** — a planted entity first on 0.065 of the pooled library; **diagnoses** — the engine abstains on all 44 datasets at its declared level. The README says so in its own voice, in the first screen, because `PROJECT_VISION` §6's rule is that the credibility of every real number depends on never faking one.
 
 ## Phase 10 — Optional / research (P3)
 Candidates, strictly after the above and only with benchmark headroom to justify them: post-action validation analytics; die-grid pattern library (mixed-signature decomposition); ML detection/attribution *compared against* the statistical baseline on the benchmark; FabKG artifact export activation (BOUNDARY §4); predictive-maintenance study on degradation trajectories.
@@ -112,3 +140,25 @@ P0 hygiene ─→ P1 fabsim+schema ─→ P2 semantic ─→ P3 monitors ─→ 
 ```
 
 The single highest-value increment if only one thing is ever built: **Phase 1 + Phase 5 + Phase 6** — randomized scenarios, an engine that finds the fault it wasn't told, and the table proving how often. That triad is the difference between this repository and every other "SQL portfolio project" in existence.
+
+---
+
+### Roadmap status, 2026-08-10
+
+| Phase | State |
+|---|---|
+| 0 hygiene | **done** (`docs/PHASE_0_COMPLETION.md`) |
+| 1 fabsim + schema v2 | **done** (ADR-013 … ADR-024) |
+| 2 semantic layer v2 | **done** (ADR-032) |
+| 3 monitors | **done** (ADR-033) |
+| 4 excursion detection | **superseded** by ADR-029 §6 — the Excursion is an output of `diagnose`, not an input to it |
+| 5 diagnosis engine | **done** (ADR-029) |
+| 6 evaluation harness | **done** (ADR-031) |
+| 7 impact / containment / actions | **done** (ADR-034) |
+| 8 dashboard as investigation workspace | **done** (ADR-035) |
+| 9 public positioning | **done** (ADR-035) |
+| 10 optional / research | **out of scope**, by its own P3 designation |
+
+**Phases 0–9 are the project's declared scope and all of them are executed.** Phase 10 is explicitly optional research and is not part of completion; its FabKG line stays an export contract that has never been activated, and activating it is a decision for a different project.
+
+Three questions were deferred by measurement rather than by omission, each with a named blocker and none of them inside this roadmap: whether the *world's* composition should be recalibrated so a single channel carries more signal (ADR-026 §1, ADR-028 §7); whether the engine's exchangeability stratum should widen beyond `tool_type` (ADR-031 §9); and what `alpha` a real fab should declare, which needs a cost model this project does not have (ADR-031 §7).
