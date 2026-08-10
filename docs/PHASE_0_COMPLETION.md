@@ -60,7 +60,7 @@ Justified deltas, each pre-declared in `PHASE_0_SCOPE_DECISIONS.md`: the one ban
 | `print()` → `logging` | Phase 1 | Changes demo output for no defect fix; engine work will restructure output anyway |
 | ruff + mypy in CI | Phase 1 gate review | New dev dependencies; gate forbade unnecessary additions |
 | Dependency lockfile | Phase 1 (with live CI) | No consumer until CI runs on a remote |
-| `LICENSE` file | Owner decision | Choosing MIT vs Apache-2 is not the assistant's call; recommendation stands in PROJECT_VISION |
+| `LICENSE` file | ~~Owner decision~~ **closed 2026-08-10** | The owner chose **MIT** at the Final Integration gate. `LICENSE` is committed and `pyproject.toml` declares it. |
 | Seed-locked test assertions (`fact_yield == 223`) | Phase 1 | They are the baseline pin during hygiene; retired when the data engine changes (scope decision C6) |
 | Five hand-synced story surfaces (py/sql/ipynb/README/PDF) | Phases 5–9 (ADR-011) | Resolved by generating surfaces from engine output, not by more synchronization |
 | `st.cache_data` never invalidates after rebuild | Phase 8 | Dashboard rework renders engine output |

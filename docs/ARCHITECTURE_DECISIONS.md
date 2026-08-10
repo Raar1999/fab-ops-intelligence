@@ -925,6 +925,16 @@ tool_wide_drift                 ETCH-03 (tool) ETCH-02/B      -
 
   It carries **no wall-clock field**, deliberately: what identifies a result is the engine and the population, and a timestamp would change on every run and make a committed file look stale when nothing had moved.
 
+  **The notebook is not regenerated, and the reason is a constraint rather than a preference.** Phase 9 also asks for "notebook case studies [regenerated] from artifacts", and ADR-011 wants presentation surfaces generated from engine output. `notebooks/investigation.ipynb` narrates the schema **v1** demo and is protected by ADR-010; a v2 case study would have to be executed against a dataset, and a dataset is ~118 MB with the answer key as its sibling, so committing one is out of the question and a notebook that cannot run from a clone is worse than no notebook. What ADR-011 asks for is nevertheless delivered on the v2 side, by a different surface: `fabops-report` *is* the generated case study — one command, one artifact, every number from the engine — and the workspace renders it. The hand-synchronised copies ADR-011 exists to retire are the v1 ones, and they remain exactly as many as they were.
+
+## ADR-036 — MIT, and the last Phase 0 deferral is closed
+
+**Status: Accepted (2026-08-10), at the Final Integration gate.** `docs/PHASE_0_COMPLETION.md` §6 deferred one item to the owner by name: *"`LICENSE` file — Owner decision — choosing MIT vs Apache-2 is not the assistant's call."* It was put to the owner at this gate and the answer is **MIT**.
+
+`LICENSE` is committed, `pyproject.toml` declares `license = "MIT"` with `license-files = ["LICENSE"]` (PEP 639, which moves the build requirement to `setuptools>=77`), and the README carries a licence section stating that the data is synthetic and that neither the code nor the documents say anything about a real fab.
+
+Two things this closes. The deferred-debt row in the Phase 0 report is marked closed rather than deleted, so the deferral and its resolution both stay on the record. And an unlicensed repository is a real defect in a portfolio piece rather than a neutral default: a reviewer cannot legally copy a line of it, which is the opposite of what the repository exists to do.
+
 **5. The library row is what a claim is permitted on, and the claim is not flattering.** `fabeval.population.claimable` requires ten scenarios *and* the declared split, and neither half of the split reaches ten alone — so the harness now also scores the pooled library, and that is the row the README's headline rests on. Re-measured end to end for this gate, and reproducing ADR-031 §8 exactly:
 
 ```

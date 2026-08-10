@@ -219,6 +219,12 @@ is fixed in [`docs/audit/FABOPS_VS_FABKG_BOUNDARY.md`](docs/audit/FABOPS_VS_FABK
 No knowledge graph, ontology, LLM, agent or RAG component exists in this
 repository, and ADR-006 is a binding prohibition on adding one.
 
+## Licence
+
+[MIT](LICENSE). The data is synthetic and the figures describe a simulation;
+the licence covers the code and the documents, and nothing in either is a
+statement about any real fab.
+
 ---
 
 *Synthetic data throughout. Honesty over hype: this is a methodology

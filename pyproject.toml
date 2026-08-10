@@ -5,14 +5,17 @@
 # documented command works from anywhere.
 
 [build-system]
-requires = ["setuptools>=68"]
+# PEP 639 (`license = "MIT"` with `license-files`) needs 77 or newer.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "fab-ops-analytics"
 version = "0.1.0"
-description = "Semiconductor fab operations analytics on a synthetic MES-style dataset: yield, defect, tool and maintenance intelligence with a documented root-cause investigation."
+description = "A synthetic semiconductor fab whose faults are physics-mediated and whose answer key is a separate file, the answer-blind monitors, root-cause engine and decision-support layer that read it, and the benchmark that measures how often the engine is right."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
