@@ -154,11 +154,12 @@ fab-ops-intelligence/
   installed read-only so that reading a dataset cannot change the bytes a
   manifest hashes. The v1 layer is 13 named views in `sql/views.sql`.
 - **Every threshold is measured against the distribution of its own statistic.**
-  Four separate gates of this project each found a criterion whose reference
-  distribution had never been computed, and in every case the target traced back
-  to the v1 demo (ADR-026 through ADR-030). The rule that came out of it: a
-  criterion phrased as "the demo should visibly show X" must ship with the
-  distribution of X on a fault-free world before it may gate anything.
+  Five separate gates of this project have each found a criterion whose
+  reference distribution had never been computed — four of them inherited from
+  the v1 demo (ADR-026 through ADR-030), and one written by this project itself
+  and caught the same way (ADR-033). The rule that came out of it: a criterion
+  phrased as "the demo should visibly show X" must ship with the distribution of
+  X on a fault-free world before it may gate anything.
 - **Determinism is a property, not a habit.** Same inputs, same content hash;
   every multi-row query states a total order; and a harness that shuffles the
   rows of any query without an `ORDER BY` must leave every report byte-identical.
