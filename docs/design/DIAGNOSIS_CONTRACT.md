@@ -347,6 +347,29 @@ Runtime, and the one that actually proves it:
    `fabops.config`. This is the runtime form of rule 2 — reaching the hidden
    plane must require deliberate circumvention, not a two-character edit.
 
+### 3.1 What sits on top of this artifact, and why it is not part of it
+
+*(Added 2026-08-10, ADR-034.)* `EXPANSION_ROADMAP` Phase 7 adds impact,
+containment and recommended checks, and `FABOPS_VS_FABKG_BOUNDARY.md` §4's
+Phase 0 sketch drew all three inside a document it also called
+`fabops.investigation/v1`. They are **not** part of this artifact and the
+schema name stays as §3 defines it.
+
+The reason is in §2. The engine is handed a database path and nothing else; an
+impact estimate needs a **subject**, which is a conclusion rather than an
+input. `diagnose` therefore cannot compute one, and a schema that declared the
+field would describe two different documents depending on which function
+produced it. The decision-support document is `fabops.report/v1`, it embeds
+this artifact verbatim, and its subject is either the engine's leading
+candidate or one a human supplied — recorded as which, because a reader cannot
+tell those apart from a name.
+
+When this artifact says `insufficient_evidence` — which at `ALPHA = 0.05` it
+does on every dataset in the library — the report carries no subject, no impact
+and no containment, and says why. Supplying the least innocent candidate to
+fill the space is the audited failure this whole contract exists to remove, and
+the last stage is where it would be easiest to reintroduce.
+
 ## 7. What is deliberately out of scope
 
 No LLM, no RAG, no agent, no graph database, no ontology, no external service
