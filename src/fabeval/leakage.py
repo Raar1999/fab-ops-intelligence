@@ -38,9 +38,9 @@ from fabeval.queries import (
     zscore,
 )
 
-__all__ = ["CROSS_DATASET_TESTS", "Finding", "L7_CHANNELS", "LEAKAGE_TESTS",
-           "code_surfaces", "l7_null_calibration", "notebook_source",
-           "run_leakage_suite"]
+__all__ = ["CODE_PLANE_ROOTS", "CROSS_DATASET_TESTS", "Finding", "L7_CHANNELS",
+           "LEAKAGE_TESTS", "code_surfaces", "l7_null_calibration",
+           "notebook_source", "run_leakage_suite"]
 
 #: Tokens L1 forbids anywhere in the observable schema or its vocabularies.
 _FORBIDDEN_TOKENS = ("fault", "truth", "scenario", "bad", "marginal",
@@ -599,11 +599,45 @@ def code_surfaces(directory: Path) -> list[tuple[str, str]]:
     return out
 
 
+#: Which code surfaces L9 scans, what each may not import, and what each may
+#: not name. A table rather than one rule, because the repository now contains
+#: four planes and they do not have the same privileges (ADR-013, ADR-037).
+#:
+#: The first three rows are the original rule: an analysis or presentation
+#: surface reaches neither plane of a dataset, so it may not import the
+#: simulator, may not import the evaluator, and may not name a hidden-plane
+#: path or the configuration directory.
+#:
+#: The fourth row is the product plane, and it is deliberately *not* the same
+#: rule. `fabapp` generates datasets, so it imports the simulator and reads the
+#: configuration directory — both are what a create-a-dataset button is. What
+#: it may not do is reach the answer: it may not import the evaluator, which is
+#: the one component permitted to hold both planes, and it may not name the
+#: hidden plane **at all**. That token ban is stricter than the first three
+#: rows carry, and it is affordable exactly because this package has no
+#: legitimate use for the word, while `fabops` uses it to document what it does
+#: not do.
+CODE_PLANE_ROOTS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("src/fabops", ("fabsim", "fabeval"),
+     ("truth.json", "truth/", "scenarios/")),
+    ("app", ("fabsim", "fabeval"),
+     ("truth.json", "truth/", "scenarios/")),
+    ("notebooks", ("fabsim", "fabeval"),
+     ("truth.json", "truth/", "scenarios/")),
+    ("src/fabapp", ("fabeval",), ("truth",)),
+)
+
+
 def l9_code_plane_lint(_dataset: Any = None) -> Finding:
-    """`fabops`, `app` and the notebooks reach neither plane of a dataset."""
+    """No code surface reaches a plane it is not entitled to.
+
+    `fabops`, `app` and the notebooks reach neither plane of a dataset;
+    `fabapp` reaches the generator, because that is what it is for, and never
+    the hidden plane or the grader. `CODE_PLANE_ROOTS` is the table.
+    """
     repository = Path(__file__).resolve().parents[2]
     problems: list[str] = []
-    for root in ("src/fabops", "app", "notebooks"):
+    for root, forbidden_imports, forbidden_tokens in CODE_PLANE_ROOTS:
         directory = repository / root
         if not directory.exists():
             continue
@@ -621,10 +655,10 @@ def l9_code_plane_lint(_dataset: Any = None) -> Finding:
                 elif isinstance(node, ast.ImportFrom) and node.module:
                     names = [node.module]
                 for name in names:
-                    if name.split(".")[0] in ("fabsim", "fabeval"):
+                    if name.split(".")[0] in forbidden_imports:
                         problems.append(f"{label} imports {name}")
-            for token in ("truth.json", "truth/", "scenarios/"):
-                if token in source:
+            for token in forbidden_tokens:
+                if token in source.lower():
                     problems.append(f"{label} names {token!r}")
     return Finding("L9 code-plane lint", not problems,
                    "clean" if not problems else "; ".join(problems))

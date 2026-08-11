@@ -188,11 +188,26 @@ def _rewrite_hidden_plane(path: Path) -> None:
 def test_the_whole_analysis_plane_is_invariant_to_the_answer_key(chain,
                                                                  tmp_path,
                                                                  outputs):
-    """§6.6, extended past the engine to every surface built on it."""
+    """§6.6, extended past the engine to every surface built on it —
+    **including the product**, which is the surface a person actually reads.
+
+    The product plane is the one component that generates a dataset and then
+    analyses one, so it is the one that could reach the answer key by joining a
+    name onto a database path it legitimately holds. Here the answer key really
+    is a sibling of the database, exactly as it is on disk after a build, and
+    every value in it is rewritten between the two passes. If a single byte of
+    a registry record, a workspace payload, a verdict or an explainability
+    checklist moved, something on the path from `fab.db` to a screen had read
+    the file next door.
+    """
+    from fabops.diagnosis import diagnose
     from fabops.monitors import monitor
     from fabops.report import build_report
     from fabops.report.workspace import load_workspace
-    from fabops.diagnosis import diagnose
+
+    from fabapp.explain import explain_candidate, explain_investigation
+    from fabapp.registry import inspect
+    from fabapp.service import open_dataset
 
     source = Path(chain["db_path"])
     workspace = tmp_path / "invariance"
@@ -203,24 +218,34 @@ def test_the_whole_analysis_plane_is_invariant_to_the_answer_key(chain,
                  workspace / "truth" / Path(chain["truth_path"]).name)
     shutil.copy2(source.parent / "manifest.json", workspace / "manifest.json")
 
+    def everything() -> dict:
+        payload = open_dataset(database)
+        artifact = payload["investigation"]["investigation"]
+        assessed = [c for c in artifact["candidates"]
+                    if c["status"] == "assessed"]
+        return {
+            "investigation": diagnose(database).to_dict(),
+            "monitor": monitor(database).to_dict(),
+            "report": build_report(database).to_dict(),
+            "workspace": load_workspace(database),
+            "product_record": inspect(database).to_dict(),
+            "product_payload": payload,
+            "product_outcome": explain_investigation(artifact).to_dict(),
+            "product_explanations": [
+                explain_candidate(artifact, candidate).to_dict()
+                for candidate in assessed[:5]],
+        }
+
     digest = hashlib.sha256(database.read_bytes()).hexdigest()
-    before = {
-        "investigation": diagnose(database).to_dict(),
-        "monitor": monitor(database).to_dict(),
-        "report": build_report(database).to_dict(),
-        "workspace": load_workspace(database),
-    }
+    before = everything()
     _rewrite_hidden_plane(workspace / "truth" /
                           Path(chain["truth_path"]).name)
-    after = {
-        "investigation": diagnose(database).to_dict(),
-        "monitor": monitor(database).to_dict(),
-        "report": build_report(database).to_dict(),
-        "workspace": load_workspace(database),
-    }
+    after = everything()
 
     assert hashlib.sha256(database.read_bytes()).hexdigest() == digest, (
         "the observable plane moved; the comparison below would mean nothing")
+    assert before["product_explanations"], (
+        "no candidate was explained, so the checklists were not compared")
     for name in before:
         assert json.dumps(after[name], sort_keys=True, default=str) == \
             json.dumps(before[name], sort_keys=True, default=str), name

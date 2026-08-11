@@ -127,6 +127,51 @@ Rule for every phase: the existing demo (`ETCH-02` story, README, notebook) **mu
 >
 > The words the acceptance names are backed as follows: **detects** — 0.000 on every population; **ranks** — a planted entity first on 0.065 of the pooled library; **diagnoses** — the engine abstains on all 44 datasets at its declared level. The README says so in its own voice, in the first screen, because `PROJECT_VISION` §6's rule is that the credibility of every real number depends on never faking one.
 
+## Phase P — Productization (after Phase 9; ADR-037)
+
+- **Objective:** a person who receives the repository can start FabOps, create
+  or load a dataset, explore the fab, investigate it and read the evidence,
+  without orchestrating internal modules.
+- **Modules:** `src/fabapp/` — the product plane: scenario catalog, dataset
+  registry, generation service, analysis service, explainability, `fabops-app`,
+  and nine screens. `fabops.report.workspace` gains a Defect page assembled
+  from measurements the defect monitor already produced.
+- **Dependencies:** Phases 1–9. There must be something worth presenting before
+  presenting it is a phase, which is why this is not Phase 0.
+- **Acceptance:** `pip install -e ".[app]"` then `fabops-app`, from any working
+  directory; a dataset created from the interface; every screen executed on a
+  faulted and a fault-free dataset; the investigation byte-identical whether or
+  not the product can name the scenario it built; one console script that
+  starts the application and no second Streamlit entry point.
+- **Value:** the difference between a repository that demonstrates a capability
+  to somebody who reads it and a product that demonstrates it to somebody who
+  runs it.
+
+> **Executed 2026-08-11; recorded in ADR-037.** Three notes on what the phase
+> turned out to be.
+>
+> **The hard part was not the interface, it was the plane.** A product creates a
+> dataset and then reads one, and no existing plane may do both — `fabops` may
+> not import `fabsim`, and `app/` is scanned by L9 and may not either. So the
+> substance of the phase is a declared fourth privilege row and the guards that
+> hold it: an observable-only build handle with no directory field, an L9 that
+> became a per-root table, and a measured invariance showing the scenario the
+> product knows cannot reach the engine.
+>
+> **One surface was deleted and one was deliberately not.**
+> `app/investigation_workspace.py` was a duplicate v2 entry point once its six
+> pages moved into the product, and duplicate entry points are the debt this
+> roadmap's own hygiene rule exists to prevent. `app/ops_dashboard.py` stays
+> untouched under ADR-010 — it reads a different fab — and is reachable as
+> `fabops-app --legacy` rather than merged in.
+>
+> **Phase 8's acceptance is now met twice over, and its wording was too narrow.**
+> "No hard-coded suspect anywhere in `app/`" held of one file; the same scans
+> now run over every module of the interface, alongside two the audit did not
+> anticipate: no screen may execute a query, and no screen may compare anything
+> against a float literal, because a threshold in an interface is a decision in
+> an interface.
+
 ## Phase 10 — Optional / research (P3)
 Candidates, strictly after the above and only with benchmark headroom to justify them: post-action validation analytics; die-grid pattern library (mixed-signature decomposition); ML detection/attribution *compared against* the statistical baseline on the benchmark; FabKG artifact export activation (BOUNDARY §4); predictive-maintenance study on degradation trajectories.
 
@@ -157,8 +202,9 @@ The single highest-value increment if only one thing is ever built: **Phase 1 + 
 | 7 impact / containment / actions | **done** (ADR-034) |
 | 8 dashboard as investigation workspace | **done** (ADR-035) |
 | 9 public positioning | **done** (ADR-035) |
+| P productization | **done** (ADR-037) |
 | 10 optional / research | **out of scope**, by its own P3 designation |
 
-**Phases 0–9 are the project's declared scope and all of them are executed.** Phase 10 is explicitly optional research and is not part of completion; its FabKG line stays an export contract that has never been activated, and activating it is a decision for a different project.
+**Phases 0–9 are the project's declared scope and all of them are executed**, and Phase P — productization — was added after them by the owner and is executed too. Phase 10 is explicitly optional research and is not part of completion; its FabKG line stays an export contract that has never been activated, and activating it is a decision for a different project.
 
 Three questions were deferred by measurement rather than by omission, each with a named blocker and none of them inside this roadmap: whether the *world's* composition should be recalibrated so a single channel carries more signal (ADR-026 §1, ADR-028 §7); whether the engine's exchangeability stratum should widen beyond `tool_type` (ADR-031 §9); and what `alpha` a real fab should declare, which needs a cost model this project does not have (ADR-031 §7).

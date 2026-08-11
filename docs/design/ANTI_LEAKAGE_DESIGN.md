@@ -42,7 +42,7 @@ Runs post-generation (fast subset inside `selftest.py`, full suite in CI over th
 | L6 | Signature overlap | distribution distance (per-wafer edge-zone share) affected vs unaffected cohorts | overlap coefficient ≥ 0.2 — separated, not partitioned |
 | L7 | Null blindness | run the reference detection queries (chamber yield split, defect-rate split, CD shift) on the null dataset | ~~all effect sizes below the subtle-severity floor~~ — **restated in ADR-027, see §3.8**: no chamber above the fab's own action limit on any null, **and** the exceedance rate over the null population consistent with the declared level |
 | L8 | Seed sensitivity | build 3 seeds of one scenario; compare affected-wafer sets and realized onsets | sets differ; scenario semantics (mechanism/target/onset intent) identical |
-| L9 | Code-plane lint | grep `src/fabops/`, `app/`, notebooks for `fabsim` imports, `scenarios/`, `truth` | zero hits |
+| L9 | Code-plane lint | per-root table (see §3.10): `src/fabops/`, `app/`, notebooks may not import `fabsim` or `fabeval` or name `truth.json`, `truth/`, `scenarios/`; `src/fabapp/` may not import `fabeval` or name `truth` at all | zero hits |
 | L10 | Constant-fingerprint scan | for every numeric observable column: within-group variance for the affected entity vs others | no column constant within the affected group while variable elsewhere |
 | L11 | Reference-recovery asymmetry | the intended mediated evidence *is* recoverable at moderate/obvious severity by reference queries, and near the floor at subtle | per-scenario expectations table in `eval/fixtures/` |
 
@@ -220,3 +220,52 @@ value on the library (zero differing floats across five scenarios). The legacy
 v1 surface was measured rather than assumed: its committed database was
 physically rewritten in reverse row order and the narrated story came out
 identical.
+
+## 3.10 The product plane, and why L9 became a table (the productization gate)
+
+The repository now contains a fourth plane. `fabapp` **generates** a dataset
+and then **analyses** one, because that is what a person does with a product,
+and it is the first component here that holds both privileges in one process.
+ADR-037 declares it; this section records what changed on this document's side.
+
+**L9 is now a table of roots rather than one rule**, because four planes do not
+have the same privileges. `fabeval.leakage.CODE_PLANE_ROOTS` holds
+(root, forbidden imports, forbidden tokens), the shipped check reads it, and
+the boundary test imports the same table — so the rule cannot drift into two
+definitions, which is the failure that let the notebook be listed as covered
+while never being read (§3.6).
+
+| root | may not import | may not name |
+|---|---|---|
+| `src/fabops/` | `fabsim`, `fabeval` | `truth.json`, `truth/`, `scenarios/` |
+| `app/` | `fabsim`, `fabeval` | `truth.json`, `truth/`, `scenarios/` |
+| `notebooks/` | `fabsim`, `fabeval` | `truth.json`, `truth/`, `scenarios/` |
+| `src/fabapp/` | `fabeval` | `truth` — the bare word, anywhere |
+
+The product row is looser in one direction and **stricter in the other**, and
+both halves are deliberate. It may import the simulator and name the
+configuration directory, because a create-a-dataset button is exactly those two
+things. It may not import the evaluator — the one component allowed to hold
+both planes, and therefore the one import that would let a screen score the
+dataset it is displaying. And its token ban is absolute rather than
+path-shaped: `truth.json`, `truth/` and `dataset.truth` are three spellings of
+one reach, a scan that enumerated spellings is a scan somebody gets around by
+accident, and this package has no legitimate use for the word — unlike
+`fabops`, which uses it to document what it does not do.
+
+**Two structural guards sit underneath the lint**, because the product's route
+to the hidden plane is a path join rather than an import, and no lint catches
+arithmetic on strings. `fabsim.emit.build_observable` returns a handle with a
+database path, observable provenance, and **no directory field**; and the
+analysis entry point is handed `record.db_path` and nothing else. The first
+makes the sibling directory unnameable; the second keeps the scenario out of
+the analysis.
+
+**And the invariance is measured rather than asserted.** The product knows
+which scenario a user picked — it built the dataset — so the question is
+whether that knowledge can reach the engine. One dataset's investigation is
+rendered twice, once with the scenario library present and once with it pointed
+at an empty directory so the product genuinely cannot name what it built, and
+the two payloads must be byte-identical. It is the instrument this document
+already applies on the generation side: not a promise that something is unused,
+a measurement that removing it changes nothing.

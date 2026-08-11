@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from fabsim import SCHEMA_VERSION, __version__
 from fabsim.defects import DefectPopulation, inspect_response
@@ -55,7 +55,9 @@ from fabsim.world import World, load_world
 __all__ = [
     "DATASET_ROOT",
     "Dataset",
+    "ObservableHandle",
     "build_dataset",
+    "build_observable",
     "realize_dataset",
 ]
 
@@ -97,6 +99,63 @@ class Dataset:
     @property
     def truth_path(self) -> Path:
         return self.directory / "truth" / "truth.json"
+
+
+@dataclass(frozen=True)
+class ObservableHandle:
+    """What a build hands to a caller outside `fabsim`.
+
+    `Dataset` above names both planes because the builder legitimately holds
+    both — it wrote them. This is the shape everything downstream gets instead,
+    and the difference is not politeness. A product surface that generates a
+    dataset and then analyses it is the one place in this architecture where
+    both privileges meet in one process, so the object it is handed is the
+    place to make the hidden plane **unreachable rather than unread**: there is
+    no field it could arrive through, and no directory to join a name onto.
+
+    That is the same move `probe(timeline, observations, population)` makes in
+    the kill model (ADR-021) and the same one `diagnose(db_path)` makes at the
+    analysis boundary — a signature that cannot express the mistake, rather
+    than a rule asking a caller not to make it.
+
+    Every field here is observable-plane provenance the manifest already
+    carries in the dataset directory. The manifest's `files` map is *not*
+    carried: it inventories what was written, which is the one part of a
+    manifest that names the other plane. A digest is not a disclosure and the
+    manifest may keep it (`manifest.py`), but a product panel rendering the
+    file list has no use for the name and every reason not to print it.
+    """
+
+    dataset_id: str
+    scenario_id: str
+    #: The one path an analytical consumer is ever given.
+    db_path: Path
+    seed: int
+    schema_version: str
+    fabsim_version: str
+    config_sha256: str
+    world_sha256: str
+    build_fingerprint: str
+    content_sha256: str
+    row_counts: Mapping[str, int]
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Plain JSON-able provenance, for a registry or a details panel."""
+        return {
+            "dataset_id": self.dataset_id,
+            "scenario_id": self.scenario_id,
+            "db_path": str(self.db_path),
+            "seed": self.seed,
+            "schema_version": self.schema_version,
+            "fabsim_version": self.fabsim_version,
+            "config_sha256": self.config_sha256,
+            "world_sha256": self.world_sha256,
+            "build_fingerprint": self.build_fingerprint,
+            "content_sha256": self.content_sha256,
+            "row_counts": dict(sorted(self.row_counts.items())),
+            "created_at": self.created_at,
+        }
 
 
 def realize_dataset(config: ScenarioConfig, seed: int | None = None, *,
@@ -174,3 +233,46 @@ def build_dataset(config: ScenarioConfig, seed: int | None = None, *,
     if selftest:
         check_dataset(dataset)
     return dataset
+
+
+def build_observable(config: ScenarioConfig, seed: int | None = None, *,
+                     world: World | None = None,
+                     root: Path,
+                     created_at: str | None = None,
+                     selftest: bool = True) -> ObservableHandle:
+    """Build one dataset and return **only** its observable provenance.
+
+    The same build as `build_dataset` — both planes are written, because a
+    dataset without its answer key could never be scored — followed by a
+    projection onto the observable side. What the caller receives is an
+    `ObservableHandle`: a database path and the provenance a consumer is
+    entitled to, with no truth object, no `Dataset`, and no directory.
+
+    This is the entry point for the **product plane**, which is the only place
+    in this architecture that both generates a dataset and then analyses one.
+    `build_dataset` stays where it is for `fabsim`'s own callers and for the
+    evaluator, which is the one component allowed to hold both planes at once.
+
+    `root` is keyword-only and has **no default**, unlike `build_dataset`'s.
+    The default there is `data/scenarios/`, so a call that omitted it wrote
+    into the repository; requiring it makes the destination a decision at every
+    call site, which is the rule `fabeval` already holds itself to and for the
+    same reason.
+    """
+    dataset = build_dataset(config, seed, world=world, root=root,
+                            created_at=created_at, selftest=selftest)
+    manifest = dataset.manifest
+    return ObservableHandle(
+        dataset_id=str(manifest["dataset_id"]),
+        scenario_id=str(manifest["scenario_id"]),
+        db_path=dataset.db_path,
+        seed=int(manifest["seed"]),
+        schema_version=str(manifest["schema_version"]),
+        fabsim_version=str(manifest["fabsim_version"]),
+        config_sha256=str(manifest["config_sha256"]),
+        world_sha256=str(manifest["world_sha256"]),
+        build_fingerprint=str(manifest["build_fingerprint"]),
+        content_sha256=str(manifest["content_sha256"]),
+        row_counts=dict(manifest["row_counts"]),
+        created_at=str(manifest["created_at"]),
+    )

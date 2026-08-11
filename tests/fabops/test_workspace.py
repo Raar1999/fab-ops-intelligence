@@ -1,21 +1,24 @@
 """
-The investigation workspace: the data behind every page, and the figures.
+The workspace data layer: the numbers behind every page, and the figures.
 
 `DASHBOARD_AUDIT` §4 asks for a surface that *renders engine output and never
-computes or asserts a conclusion itself*. That is a testable property, so it is
-tested here rather than asserted in a docstring:
+computes or asserts a conclusion itself*. That splits into two testable halves
+and this module owns the first:
 
 * every page's payload is produced without Streamlit, so it is reachable from a
-  test that needs no browser;
-* the app file contains no entity literal and no analysis — a suspect
-  highlighted on the old dashboard was highlighted by a module constant, and
-  the check that this cannot recur is a scan, not a promise;
-* the figures draw the same numbers the decision was made from.
+  test that needs no browser, and the figures draw the same numbers the
+  decision was made from — here;
+* no screen contains an entity literal, a query or an import of the simulator —
+  `tests/fabapp/test_ui_guards.py`, which applies those scans to *every* module
+  of the product's interface rather than to one file.
+
+The second half used to live here and pointed at `app/investigation_workspace.py`.
+That file was a duplicate v2 entry point once the product absorbed its six
+pages, so it is gone and its guards moved with the pages (ADR-037). The legacy
+schema v1 dashboard is untouched and is still checked, in the same place.
 """
 from __future__ import annotations
 
-import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -24,7 +27,6 @@ from fabops.report import figures, workspace
 from fabops.semantic import open_layer
 
 REPO = Path(__file__).resolve().parents[2]
-APP = REPO / "app" / "investigation_workspace.py"
 
 
 @pytest.fixture(scope="module")
@@ -44,10 +46,10 @@ def loaded(demo_dataset):
 
 def test_every_page_has_a_payload(loaded):
     assert set(workspace.WORKSPACE_PAGES) == {
-        "Fab Today", "Process", "Equipment", "Yield", "Investigation",
-        "Wafer explorer"}
+        "Fab Today", "Process", "Equipment", "Yield", "Defect",
+        "Investigation", "Wafer explorer"}
     for key in ("dataset", "fab_today", "process", "equipment", "yield",
-                "investigation", "wafers", "monitor"):
+                "defect", "investigation", "wafers", "monitor"):
         assert loaded[key], key
     assert loaded["dataset"]["schema_version"] == "2.0"
     assert "fabsim_version" not in loaded["dataset"], (
@@ -151,6 +153,34 @@ def test_the_investigation_page_is_the_decision_artifact(loaded,
         demo_dataset["db_path"]).to_dict()
 
 
+def test_the_defect_page_assembles_measurements_that_already_existed(
+        loaded, layer):
+    """The page the product added, and the rule it was added under: every
+    number on it is one the defect monitor already computed and the workspace
+    was throwing away. If this page ever computes something of its own, this
+    assertion is what has to be edited to allow it."""
+    page = loaded["defect"]
+    measurements = loaded["monitor"]["measurements"]["defect"]
+
+    assert page["class_pareto"] == measurements["class_pareto"]
+    assert page["signature_leaders"] == measurements["signature_leaders"]
+    assert page["wafers_scored"] == measurements["wafers_scored"]
+    assert page["signals"] == [s for s in loaded["monitor"]["signals"]
+                               if s["family"] == "defect"]
+
+    # …and the one query it shares with the equipment page is literally the
+    # same query, so the two pages cannot start disagreeing about a rate.
+    shared = workspace.defects_per_wafer(layer)
+    assert loaded["equipment"]["defects_per_wafer"] == shared
+    assert {row["chamber_label"]: row["defects_per_wafer"]
+            for row in page["per_chamber"]} == {
+        name: round(rate, 3) for name, rate in shared.items()}
+
+    rates = [row["defects_per_wafer"] for row in page["per_chamber"]]
+    assert rates == sorted(rates, reverse=True)
+    assert "exposure and not" in page["per_chamber_note"]
+
+
 # ------------------------------------------------------------- the figures
 
 
@@ -182,149 +212,18 @@ def test_every_figure_renders(layer, loaded, tmp_path):
         figure.clf()
 
 
-# -------------------------------------------------- the app is a renderer
-
-
-def test_the_app_computes_nothing():
-    """Everything numeric on the screen must come from `workspace` or
-    `figures`. This scans the app for the arithmetic and the SQL that would
-    mean it had started deciding things for itself."""
-    source = APP.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-
-    imported = {node.module for node in ast.walk(tree)
-                if isinstance(node, ast.ImportFrom) and node.module}
-    imported |= {alias.name for node in ast.walk(tree)
-                 if isinstance(node, ast.Import) for alias in node.names}
-    assert not {name for name in imported
-                if name.split(".")[0] in ("fabsim", "fabeval")}
-    assert "sqlite3" not in imported, "the app opened its own database"
-    assert not re.search(r"\bSELECT\b", source, re.I), (
-        "the app contains SQL; analysis belongs in the semantic layer")
-
-
-#: What a v2 presentation surface may not name. Declared once so the scan and
-#: the mutation that proves the scan works are literally the same expression.
-FORBIDDEN_LITERALS = (r"ETCH-\d", r"CVD-\d", r"PVD-\d", r"CMP-\d",
-                      r"LITHO-\d", r"Mobile-28", r"Logic-14",
-                      r"chamber_edge_uniformity", r"param_drift",
-                      r"particle_excursion", r"benign_offset",
-                      r"DEMO_SUSPECT_TOOL")
-
-
-def entity_hits(source: str) -> list[str]:
-    return [pattern for pattern in FORBIDDEN_LITERALS
-            if re.search(pattern, source)]
-
-
-def test_the_app_names_no_entity_and_no_mechanism():
-    """The audited dashboard's defect, in the one place it would return.
-
-    `SUSPECT = "ETCH-02"` drove a pink row and a default selection. Nothing in
-    this file may name a tool, a chamber, a product or a mechanism — where a
-    candidate is highlighted here it is because the engine ranked it.
-    """
-    source = APP.read_text(encoding="utf-8")
-    assert not entity_hits(source)
-
-    tree = ast.parse(source)
-    imported = {node.module for node in ast.walk(tree)
-                if isinstance(node, ast.ImportFrom) and node.module}
-    assert "fabops.config" not in imported, (
-        "the v2 workspace imported the module that holds the legacy demo's "
-        "suspect and the legacy database path")
-
-
-def _code_only(path: Path) -> str:
-    """The module's source with its docstrings removed.
-
-    Scanned separately from prose on purpose: the app's own docstring explains
-    *why* it must not fall back to the legacy database, and a scan that could
-    not tell an explanation from an instruction would forbid explaining.
-    """
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    docstrings = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
-                             ast.AsyncFunctionDef)) and node.body:
-            first = node.body[0]
-            if (isinstance(first, ast.Expr)
-                    and isinstance(first.value, ast.Constant)
-                    and isinstance(first.value.value, str)):
-                docstrings.add(id(first.value))
-    parts = [ast.dump(node) for node in ast.walk(tree)
-             if isinstance(node, (ast.Name, ast.Attribute))]
-    parts += [node.value for node in ast.walk(tree)
-              if isinstance(node, ast.Constant)
-              and isinstance(node.value, str) and id(node) not in docstrings]
-    return "\n".join(parts)
-
-
-def test_the_entity_scan_fires_on_an_app_that_names_one():
-    """A guard that cannot fail is not a guard.
-
-    The audited dashboard's own constant is appended to a copy of the app and
-    run through the *same function* the real file passes, so the two cannot
-    diverge into a strict scan and a lenient mutation.
-    """
-    poisoned = APP.read_text(encoding="utf-8") + '\nSUSPECT = "ETCH-02"\n'
-    assert entity_hits(poisoned) == [r"ETCH-\d"]
-
-
-def test_the_sql_scan_fires_on_an_app_that_queries():
-    poisoned = APP.read_text(encoding="utf-8") + (
-        '\nrows = st.connection("x").query("SELECT 1 FROM runs")\n')
-    assert re.search(r"\bSELECT\b", poisoned, re.I)
-    assert not re.search(r"\bSELECT\b",
-                         APP.read_text(encoding="utf-8"), re.I)
-
-
-def test_the_app_has_no_default_dataset():
-    """A v2 surface that fell back to `fabops.config.DB_PATH` would answer
-    about the schema v1 fab with no error anywhere."""
-    code = _code_only(APP)
-    assert "DB_PATH" not in code
-    assert "--dataset" in code and "FABOPS_DATASET" in code
-
-
-@pytest.mark.parametrize("page", workspace.WORKSPACE_PAGES)
-def test_every_page_executes(demo_dataset, page):
-    """Streamlit's bare mode runs the script with every widget returning its
-    default, which is enough to prove each page renders end to end on real
-    data. The repository has never had a test that executed a dashboard; the
-    audited one was verified by hand once and then drifted."""
-    import subprocess
-    import sys
-
-    pytest.importorskip("streamlit")
-    result = subprocess.run(
-        [sys.executable, str(APP), "--dataset", demo_dataset["db_path"],
-         "--page", page],
-        capture_output=True, text=True, cwd=str(REPO), timeout=900)
-    assert result.returncode == 0, result.stderr[-2000:]
-    assert "Traceback" not in result.stderr, result.stderr[-2000:]
-
-
-def test_the_investigation_page_executes_on_a_fault_free_dataset(null_dataset):
-    """The page that is most tempting to write for the case where there *is* a
-    candidate. On a fault-free world there is none, and it must still render."""
-    import subprocess
-    import sys
-
-    pytest.importorskip("streamlit")
-    result = subprocess.run(
-        [sys.executable, str(APP), "--dataset", null_dataset["db_path"],
-         "--page", "Investigation"],
-        capture_output=True, text=True, cwd=str(REPO), timeout=900)
-    assert result.returncode == 0, result.stderr[-2000:]
-    assert "Traceback" not in result.stderr
+# ------------------------------------- the legacy dashboard, still separate
 
 
 def test_the_legacy_dashboard_is_untouched_and_separate():
     """ADR-010: the demo is deleted from no surface until its replacement is
-    strictly better *on that surface*. These two read different fabs, so the
-    workspace is not a replacement and does not pretend to be."""
+    strictly better *on that surface*. The product reads schema v2 datasets and
+    this reads the schema v1 database, so they answer about different fabs and
+    the product is not its replacement — it is reachable from the product
+    (`fabops-app --legacy`) and is not merged into it."""
     legacy = REPO / "app" / "ops_dashboard.py"
     assert legacy.exists()
     assert "DEMO_SUSPECT_TOOL" in legacy.read_text(encoding="utf-8")
-    assert APP.exists() and APP != legacy
+    assert not (REPO / "app" / "investigation_workspace.py").exists(), (
+        "the superseded v2 workspace is back; its pages live in fabapp.ui "
+        "and two v2 entry points is the duplication ADR-037 removed")

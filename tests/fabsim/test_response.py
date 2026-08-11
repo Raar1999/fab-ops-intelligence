@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 
+from tests.fabsim.plane import hidden_plane_files_outside_the_root
+
 from fabsim.response import (
     RESPONSE_MODEL,
     Alarm,
@@ -736,9 +738,10 @@ def test_the_response_layer_reads_and_writes_no_truth_file():
     source = _module().read_text(encoding="utf-8")
     for token in ("truth.json", "truth/", "open(", "write_text", "json.dump"):
         assert token not in source, token
-    repository = Path(__file__).resolve().parents[2]
-    assert not list(repository.glob("**/truth.json"))
-    assert not (repository / "data" / "scenarios").exists()
+    # A hidden plane may exist only inside the declared dataset root;
+    # anywhere else is a slice that wrote one. See tests/fabsim/plane.py
+    # for why the assertion is no longer "none exists anywhere".
+    assert not hidden_plane_files_outside_the_root()
 
 
 def test_the_scenario_response_block_is_declared_intent_not_an_input(world):

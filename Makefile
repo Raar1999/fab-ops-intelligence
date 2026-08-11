@@ -1,12 +1,14 @@
 .PHONY: help install test \
-        setup investigate app charts notebook \
+        app-start check setup investigate app charts notebook \
         dataset diagnose monitor report workspace benchmark publish \
         clean clean-db clean-datasets
 
-# Two systems live in this repository and the targets are grouped accordingly.
-# The v2 targets take DATASET=<path to fab.db>; there is no default, because
-# `fabops.config.DB_PATH` names the *legacy v1* database and a v2 command that
-# fell back to it would answer about a different fab with no error anywhere.
+# Three groups of target: the product, the engine underneath it, and the legacy
+# v1 demo. The v2 targets take DATASET=<path to fab.db>; there is no default,
+# because `fabops.config.DB_PATH` names the *legacy v1* database and a v2
+# command that fell back to it would answer about a different fab with no error
+# anywhere. The product has no default dataset for the same reason — it opens on
+# its Datasets page instead.
 DATASET ?=
 BENCH_ROOT ?= .bench
 
@@ -16,12 +18,16 @@ help:
 	@echo "  install        pip install -e . with app/notebook/dev extras"
 	@echo "  test           run the pytest suite"
 	@echo ""
-	@echo " the engine (schema v2; pass DATASET=path/to/fab.db)"
+	@echo " the product"
+	@echo "  app-start      start FabOps (create/load a dataset, explore, investigate)"
+	@echo "  check          run the whole product workflow headlessly"
+	@echo ""
+	@echo " the engine underneath it (schema v2; pass DATASET=path/to/fab.db)"
 	@echo "  dataset        build one scenario dataset (SCENARIO=, SEED=, ROOT=)"
 	@echo "  diagnose       run the answer-blind engine on DATASET"
 	@echo "  monitor        run the four monitor families on DATASET"
 	@echo "  report         emit the full decision artifact for DATASET"
-	@echo "  workspace      launch the investigation workspace on DATASET"
+	@echo "  workspace      start FabOps opened on DATASET's investigation"
 	@echo "  benchmark      build a population and score the engine (BENCH_ROOT=)"
 	@echo "  publish        regenerate the README benchmark section from it"
 	@echo ""
@@ -41,6 +47,14 @@ install:
 
 test: setup
 	pytest -q
+
+# ------------------------------------------------------------------ the product
+
+app-start:
+	fabops-app
+
+check:
+	fabops-app --check
 
 # ------------------------------------------------------------------ schema v2
 
@@ -67,7 +81,7 @@ report: require-dataset
 	fabops-report "$(DATASET)" --summary
 
 workspace: require-dataset
-	streamlit run app/investigation_workspace.py -- --dataset "$(DATASET)"
+	fabops-app --dataset "$(DATASET)" --page Investigation
 
 benchmark:
 	fabops-benchmark --root "$(BENCH_ROOT)" --population both \

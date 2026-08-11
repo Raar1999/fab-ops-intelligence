@@ -126,12 +126,22 @@ def test_the_directory_name_discloses_nothing(built):
 
 
 def test_nothing_is_emitted_into_the_repository():
-    """Tests build into `tmp_path`; the default root stays empty until a real
-    build asks for it."""
-    assert not DATASET_ROOT.exists() or not any(DATASET_ROOT.iterdir())
+    """Tests build into `tmp_path`; the suite adds nothing to the default root.
+
+    It used to assert the default root was *empty*, which is a fact about the
+    machine rather than about the suite: anyone who had built a dataset — the
+    product's ordinary first action since ADR-037 — failed it. The intent is
+    that the **suite** never writes 120 MB into the repository, and that is
+    what is measured now, against a snapshot taken before collection.
+    """
+    from tests.conftest import datasets_added_during_the_session
+
+    assert datasets_added_during_the_session() == []
     repository = Path(__file__).resolve().parents[2]
     assert not list(repository.glob("truth.json"))
     assert not list((repository / "src").rglob("*.db"))
+    assert DATASET_ROOT == repository / "data" / "scenarios", (
+        "the emitter's default root moved; the snapshot watches the old one")
 
 
 def test_the_legacy_artifacts_are_untouched():

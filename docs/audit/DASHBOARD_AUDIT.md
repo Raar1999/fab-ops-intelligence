@@ -51,3 +51,30 @@ Proposed information architecture (maps 1:1 to the workflow table above):
 6. **Wafer explorer** — retained and extended from today's maps tab (it is the best existing screen): per-wafer defect map + run history + yield, reachable by click from any lot/tool context.
 
 Explicitly not recommended: real-time streaming widgets, auto-refresh theatrics, a chatbot pane, or any "AI insights" text box. A batch-analytics platform honestly presented as batch.
+
+---
+
+> **Executed in two steps; annotated rather than rewritten, per ADR-001.**
+> §4's information architecture was built as `app/investigation_workspace.py`
+> at the Phase 8 gate (ADR-035), and absorbed into the product at the
+> productization gate (ADR-037). The six recommended pages are unchanged and a
+> seventh joined them: **Defect**, which §4 folds into Fab Today's movers and
+> the wafer explorer's maps, and which earned its own screen once there was a
+> product with room for one. Every number on it was already computed by
+> `fabops.monitors.defect` and discarded.
+>
+> Two of this audit's three findings are now checked mechanically rather than
+> observed once. "The conclusion is in the copy" is a scan for entity and
+> mechanism literals over every module of the interface, with a mutation test
+> that appends this document's own `SUSPECT = "ETCH-02"` and requires the scan
+> to fire. "There is no time" is answered by the control charts, the state
+> timelines and the onset intervals, all of which carry a day axis.
+>
+> The third finding — no navigation between facts — is **partly** answered and
+> the honest form of that is worth recording. A user moves dataset → page →
+> candidate → evidence → onset → confounder without leaving the application,
+> and the wafer explorer reaches any wafer by yield. What still does not exist
+> is click-through *from a row*: a lot in the containment table does not open
+> its wafers. That is a navigation feature, not an analysis one, and it is
+> named here rather than implied to be finished.
+

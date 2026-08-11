@@ -33,6 +33,12 @@ notebook = ["jupyter>=1.0", "nbclient>=0.8", "nbformat>=5.9"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
+# The product. One command, and the only one a normal user needs: it creates
+# or opens a dataset, explores it, and runs the investigation. Everything
+# below it is the same capability with a developer's hands on it — the engine
+# alone, the monitors alone, the artifact alone — and remains available
+# because a testable surface and a usable one are different things (ADR-037).
+fabops-app = "fabapp.cli:main"
 fabops-build = "fabops.build_db:main"
 fabops-investigate = "fabops.investigation:main"
 # The engine. `fabops-investigate` above is the LEGACY narrated demo, whose

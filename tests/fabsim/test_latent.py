@@ -29,6 +29,8 @@ from typing import Any
 
 import pytest
 
+from tests.fabsim.plane import hidden_plane_files_outside_the_root
+
 from fabsim.latent import (
     LATENT_BLOCK_POINTS,
     LATENT_GRID_MINUTES,
@@ -1274,9 +1276,10 @@ def test_no_realization_is_written_to_disk(tmp_path, world):
     realized(world, events=[EDGE_EVENT])
     assert {p for p in tmp_path.rglob("*")} == before
 
-    repository = Path(__file__).resolve().parents[2]
-    assert not list(repository.glob("**/truth.json"))
-    assert not (repository / "data" / "scenarios").exists()
+    # A hidden plane may exist only inside the declared dataset root;
+    # anywhere else is a slice that wrote one. See tests/fabsim/plane.py
+    # for why the assertion is no longer "none exists anywhere".
+    assert not hidden_plane_files_outside_the_root()
 
 
 # ------------------------------------------------------------- the front door

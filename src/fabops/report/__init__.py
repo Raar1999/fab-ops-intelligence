@@ -48,6 +48,7 @@ from fabops.impact import (IMPACT_VERSION, ImpactEstimate, estimate_loss,
 from fabops.semantic import LAYER_VERSION, open_layer
 
 __all__ = [
+    "IMPACT_KINDS",
     "REPORT",
     "REPORT_SCHEMA",
     "REPORT_VERSION",
@@ -68,6 +69,10 @@ CONTAINMENT_LOTS = 10
 #: exposure in the run log. A product or an operator can be a *candidate* and
 #: cannot be a containment subject, and the report says so rather than
 #: silently producing nothing.
+#:
+#: Public, because a caller offering somebody a choice of subject needs to know
+#: which choices can be answered before it offers them; the product's subject
+#: selector reads this rather than keeping a second copy of the list.
 IMPACT_KINDS = ("chamber", "tool")
 
 

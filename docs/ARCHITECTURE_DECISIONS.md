@@ -954,3 +954,100 @@ median onset error (d)    7.0              10.0              7.0
 ```
 
   The README now leads with capability and this table, and states in its own voice that the engine **abstains on every dataset the project can build**, that its false-alarm rate is exactly zero and so is its detection rate, and that every lever which would buy detections was measured and spends calibration this architecture ranks higher. `PROJECT_VISION` §6's rule — never claim a number you did not measure — is what makes that the only honest front page, and the guard in §4 is what keeps it true.
+
+## ADR-037 — Productization: a fourth plane that generates and then analyses, and cannot reach the answer
+
+**Status: Accepted (2026-08-11), at the productization gate.** Put to the owner as an acceptance gate with a 15-second recommended-option timeout; **option A, the recommended set, was accepted by timeout**. That is recorded here rather than only in a run log, because the decision is architectural and outlives the run.
+
+### 1. The problem this closes
+
+Everything the repository does worked, and reaching any of it required knowing the repository. A reader had to discover scenario JSON files, type a `python -c` incantation to build a dataset, find the generated `fab.db` under an opaque directory name, run `fabops-diagnose` on it by hand, and then work out which of two Streamlit files under `app/` was the current one. Each of those is a step at which somebody stops.
+
+### 2. Why a fourth plane, rather than putting the product in an existing one
+
+A product does two things this architecture had deliberately kept apart: it **creates** a dataset and then it **reads** one. Neither existing plane may do both, and neither could be widened without deleting the guarantee it exists to provide.
+
+- `fabops` may not import `fabsim` (`test_the_planes_import_in_one_direction_only`). Putting generation there would break the rule that the analysis plane cannot see a scenario — the rule the whole repository is built on.
+- `app/` is scanned by L9 and may not import `fabsim` or name the configuration directory. A dataset-creation screen there would have required switching that lint off, and L9 is what protects the analysis plane's presentation surfaces.
+- Files under `app/` are not installed, so no command could start them from outside a checkout.
+
+So `fabapp` is declared as a plane with its own privilege row, extending ADR-013's table:
+
+| plane | may import | may read | may write |
+|---|---|---|---|
+| `fabsim` | — | configuration, world | both planes |
+| `fabops` | — | observable plane | analysis artifacts |
+| `fabeval` | `fabsim`, `fabops` | both planes | nothing |
+| **`fabapp`** | **`fabsim`, `fabops`** | **configuration, observable plane** | **datasets, through the generator** |
+
+`fabapp` may not import `fabeval`: the evaluator is the one component permitted to hold the answer key and a report at once, and a product that imported it could score the dataset it is displaying.
+
+### 3. The hidden plane is unreachable, not merely unread
+
+The product holds a database path, and the hidden plane is a sibling directory of that database. One `/` away is not far enough for discipline, so four things are structural instead.
+
+- **`fabsim.emit.build_observable`** returns an `ObservableHandle` carrying a database path and observable provenance. It has no answer-key object, no `Dataset`, and — deliberately — **no directory field**, because a path to the parent is a path to the answer. This is the move `probe(timeline, observations, population)` makes in the kill model (ADR-021) and `diagnose(db_path)` makes at the analysis boundary: a signature that cannot express the mistake.
+- **The two-plane builder is not called from this plane**, checked lexically, so the richer return type cannot be reached out of convenience.
+- **L9 gains a fourth row** rather than a second definition. `fabeval.leakage.CODE_PLANE_ROOTS` is now a table of (root, forbidden imports, forbidden tokens); the product's row forbids the evaluator and bans the hidden-plane token outright — stricter than the other three rows carry, and affordable precisely because this package has no legitimate use for the word, while `fabops` uses it to document what it does not do.
+- **Every build names the root it writes to**, the rule `fabeval` already holds itself to, because the emitter's default writes into the repository.
+
+### 4. The scenario is the user's own input, and it stops at the analysis boundary
+
+A user picks a scenario, so the product knows one. The engine must not. Three decisions follow, and the third is what makes the first two checkable.
+
+**The picker publishes build inputs and withholds the answer.** A `ScenarioOption` carries slug, world, horizon, lots, default seed and the opaque `scenario_id` — what decides how long the wait is and what the dataset's identity will be. It carries no `description`, because every configuration in this library states in prose which chamber it faults; and no event count, because a count of zero is the complete answer to `null_baseline`. `test_an_event_count_is_not_derivable_from_what_the_picker_offers` asserts the fault-free member is indistinguishable from a faulted one by the published fields alone, and a second test asserts the configurations really do contain what the picker withholds — otherwise the first would keep passing while protecting nothing.
+
+**No catalog is written, and that is a result rather than an omission.** The obvious way to show a dataset's scenario is to record the user's choice in a state file. It is unnecessary: a manifest carries `scenario_id`, which is the digest of the canonical configuration, so the slug is recovered by digesting the local library. Nothing is written, nothing can fall out of sync, a dataset built by the command line or the benchmark resolves exactly as well as one built in the application, and the emitted dataset directory stays opaque — which is what `ANTI_LEAKAGE_DESIGN.md` §4 rule 4 requires of the unit that travels. A configuration this installation does not hold resolves to *unknown*, never to a guess.
+
+**The invariance is measured.** `test_the_investigation_is_identical_whether_or_not_the_scenario_resolves` renders one dataset's investigation twice — once with the scenario library present, once pointed at an empty directory so the product genuinely cannot name what it built — and requires the two payloads to be byte-identical. That is the runtime half of answer-blindness for this plane, and it is the instrument the repository already uses on the other side of the boundary: not a promise that the scenario is unused, a measurement that removing it changes nothing.
+
+### 5. One entry point, and what happened to the two that existed
+
+`app/investigation_workspace.py` is **superseded and removed**. Its six pages moved into `fabapp.ui` unchanged — what they rendered was already right; what was wrong was that reaching them required knowing a filename — and its guards moved with them, now applied to *every* module of the interface rather than to one file. Two Streamlit files under `app/`, one current and one legacy, with no command that started either from outside a checkout, is the duplicate-entry-point debt the productization brief §11 names, and it is the kind that grows rather than sits still.
+
+`app/ops_dashboard.py` is **untouched**. ADR-010 deletes the demo from no surface until its replacement is strictly better *on that surface*, and the product reads schema v2 datasets while the demo narrates the schema v1 database — different fabs, so the product is not its replacement. It is reachable as `fabops-app --legacy` and is deliberately not merged in: one application with one navigation bar answering about two different fabs is exactly the legacy/v2 confusion several earlier gates were spent avoiding.
+
+### 6. The product computes nothing, and the one page that looks like an exception is not
+
+Every number on every screen is produced by `fabops` and rendered by `fabapp`. The **Defect** page is the only screen the product added, and it was added under the rule that made it admissible: every value on it — the class Pareto, the four spatial-signature leaderboards, the defect-rate rule hits — was already computed by `fabops.monitors.defect` and thrown away, and the per-chamber rate is literally the query the equipment page already ran, extracted so the two cannot start disagreeing. `defect_page` lives in `fabops.report.workspace` with the other six, not in the product, and a test asserts each of its fields equals the monitor measurement it came from.
+
+The explainability checklists are the same discipline. `fabapp.explain` restates fields of `fabops.investigation/v1` and cites the JSON path behind each one; every criterion is exercised by a mutation that changes one field of a real artifact and requires exactly the corresponding tick to flip. The family-wise check reads the same `insufficient_evidence` flag `fabops-diagnose` prints, so a screen and the command line cannot disagree. And no screen may compare anything against a float literal — a threshold in an interface is a decision in an interface — which is now a scan with its own mutation test.
+
+One scan was **widened** rather than tightened, and it is worth stating why that is not a weakening. The predecessor looked for the bare word `SELECT`, which also forbids an interface from saying "Select a dataset". It now matches SQL's shape (`SELECT … FROM`) and is backed by a structural check that no screen calls `execute` at all — which catches a query the word-scan would have missed if it were built by concatenation. The mutation test still fires on the same poisoned line.
+
+### 7. What was rejected
+
+- **Weakening L9 so `app/` could generate.** It would switch off the check protecting the analysis plane's presentation surfaces, in order to avoid declaring a plane.
+- **Recording the user's scenario choice inside the dataset directory.** It would make the emitted dataset non-opaque, breaking anti-leakage rule D5 for the one unit that gets handed to somebody else.
+- **Merging the legacy dashboard's pages into the product.** ADR-010, and the fab-identity confusion above.
+- **Exposing generation parameters beyond scenario and seed.** The horizon, the lot count and the world are part of a dataset's identity (`SCENARIO_SPECIFICATION.md` §5), and every scenario's declared severity is calibrated against the world and the horizon it ships with. A product that let them be retuned would be minting configurations nothing has ever measured and calling the result a scenario.
+- **A `--check` that reported partial success.** It raises instead, because a check that says "mostly worked" is worse than no check.
+
+### 8. What this does not change
+
+No statistic, threshold, anchor rule, level or version of the engine moved. The benchmark numbers in the README are the same numbers from the same measurement. `ENGINE_VERSION` deliberately does not move: this gate added no path by which a fixed database could produce a different report. `REPORT_VERSION` does not move either — `fabops.report/v1` is unchanged, and the workspace payload that gained a page is not a versioned export.
+
+FabKG remains a separate project. The product's **Export** button writes `fabops.report/v1`, which is the file-based export the boundary already defined (`FABOPS_VS_FABKG_BOUNDARY.md` §4) — preserved and documented, and pointedly not extended. No knowledge graph, ontology, retrieval layer or model API exists in this repository, ADR-006 remains a binding prohibition, and the product plane is scanned for those imports too, because a product layer is exactly where an "AI insight" panel would arrive from.
+
+### 9. Six tests that forbade the product's first action, and the phase they came from
+
+The full suite failed on this gate in a way worth recording, because the failure was not in the new code and the fix is a governance decision rather than a repair.
+
+Six slice tests — in `test_defects`, `test_die`, `test_latent`, `test_observation`, `test_response` and `test_emit` — ended with an assertion about the **working tree**:
+
+```python
+assert not list(repository.glob("**/truth.json"))
+assert not (repository / "data" / "scenarios").exists()
+```
+
+Five of the six are *static scans of one module's source*; none of them runs the slice it names, so those two lines never measured anything the test could have caused. What they encoded was a **phase** condition. At Step 3A the emitter did not exist, `PHASE_1_ACCEPTANCE` could record that no hidden plane and no dataset directory existed anywhere, and the scans asserted it in passing. They have been true ever since only because nobody had built a dataset into the default location on the machine running the suite.
+
+`GROUND_TRUTH_CONTRACT.md` §2 and `fabsim.emit.DATASET_ROOT` declare `data/scenarios/<dataset_id>/truth/truth.json` to be exactly where a dataset's hidden plane belongs, and `.gitignore` excludes that directory for that reason. So the assertion had come to say *"nobody may ever have built a dataset"* — which contradicts the architecture it exists to defend, and which the product makes a normal person's **first action**.
+
+Resolved in favour of the architecture, and narrowed rather than dropped:
+
+- **`tests/fabsim/plane.py`** — a hidden-plane artifact may exist only inside the declared dataset root. One written into `src/`, `app/`, `reports/`, `notebooks/` or `data/` itself is still a failure, and now it is the only thing that is one.
+- **`tests/conftest.py`** — the emitter test's real intent is that *the suite* never writes 120 MB into the repository. That is now measured against a snapshot of the dataset root taken in `pytest_sessionstart`, before collection: not "the root is empty", but "the suite added nothing to it".
+- **`tests/fabsim/test_plane.py`** — both replacements are shown failing on a planted violation, and shown *not* firing on the arrangement the architecture declares, because narrowing a guard is the move that quietly turns a check into decoration.
+
+Two smaller stability defects surfaced the same way and are fixed with them. `tests/fabapp/`, `tests/fabeval/` and `tests/fabsim/` were not packages, so two directories holding a `test_boundary.py` collided at collection the moment the product plane arrived with a boundary suite of its own; each now has an `__init__.py`, as `tests/fabops/` always had. And one product test built a third dataset into the shared discovery fixture, which broke exact-count assertions two files away — the count assertions were right and the fixture use was wrong.

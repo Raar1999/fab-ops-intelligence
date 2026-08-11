@@ -32,6 +32,8 @@ from typing import Any
 
 import pytest
 
+from tests.fabsim.plane import hidden_plane_files_outside_the_root
+
 from fabsim.defects import Defect, DefectOrigin, DefectPopulation, inspect_response
 from fabsim.die import (
     COVERAGE_INSIDE,
@@ -1207,9 +1209,10 @@ def test_the_die_engine_reads_and_writes_nothing():
     for token in ("truth.json", "truth/", "open(", "write_text", "json.dump",
                   "sqlite3", "fab.db"):
         assert token not in source, token
-    repository = Path(__file__).resolve().parents[2]
-    assert not list(repository.glob("**/truth.json"))
-    assert not (repository / "data" / "scenarios").exists()
+    # A hidden plane may exist only inside the declared dataset root;
+    # anywhere else is a slice that wrote one. See tests/fabsim/plane.py
+    # for why the assertion is no longer "none exists anywhere".
+    assert not hidden_plane_files_outside_the_root()
 
 
 def test_the_die_engine_imports_nothing_outside_fabsim():

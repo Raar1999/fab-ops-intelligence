@@ -36,6 +36,7 @@ PLANES = {
     "fabsim": "generation",
     "fabops": "analysis",
     "fabeval": "evaluation",
+    "fabapp": "product",
 }
 
 #: The analysis surfaces that read the **legacy schema v1** database, and are
@@ -75,15 +76,22 @@ def module_name(path: Path) -> str:
 # ------------------------------------------------------------- architecture
 
 
-def test_the_three_planes_import_in_one_direction_only():
-    """ADR-013's privilege table, as an import rule.
+def test_the_planes_import_in_one_direction_only():
+    """ADR-013's privilege table, extended by ADR-037, as an import rule.
 
     `fabsim` writes both planes and must not know its grader. `fabops` reads
     the observable plane and must reach neither of the others. `fabeval` reads
-    both and may import either — it is the only component allowed to.
+    both and may import either — it is the only component allowed to. `fabapp`
+    is the product: it may import the simulator, because creating a dataset is
+    a thing a user does, and the analysis, because reading one is the other
+    thing — and it may **not** import the evaluator, which is what would let a
+    screen score the dataset it is displaying.
+
+    The direction still only runs one way. Nothing imports `fabapp`.
     """
     allowed = {"fabsim": set(), "fabops": set(),
-               "fabeval": {"fabsim", "fabops"}}
+               "fabeval": {"fabsim", "fabops"},
+               "fabapp": {"fabsim", "fabops"}}
     for package, permitted in allowed.items():
         for path in modules_of(package):
             roots = {name.split(".")[0] for name in imports_of(path)}
@@ -142,6 +150,7 @@ def test_only_the_legacy_surfaces_know_the_legacy_database():
 
 def test_every_owned_package_declares_a_version_and_they_are_all_semver():
     """A version that cannot move cannot warn anybody that generation did."""
+    import fabapp
     import fabeval
     import fabops.diagnosis
     import fabops.impact
@@ -157,6 +166,7 @@ def test_every_owned_package_declares_a_version_and_they_are_all_semver():
         "fabops.monitors": fabops.monitors.MONITOR_VERSION,
         "fabops.impact": fabops.impact.IMPACT_VERSION,
         "fabops.report": fabops.report.REPORT_VERSION,
+        "fabapp": fabapp.APP_VERSION,
     }
     for name, version in versions.items():
         parts = version.split(".")
@@ -178,11 +188,35 @@ def test_every_console_script_resolves_to_something_callable(pyproject):
     import importlib
 
     scripts = pyproject["project"]["scripts"]
-    assert len(scripts) >= 6, scripts
+    assert len(scripts) >= 7, scripts
     for name, target in sorted(scripts.items()):
         module, _, attribute = target.partition(":")
         function = getattr(importlib.import_module(module), attribute)
         assert callable(function), name
+
+
+def test_there_is_exactly_one_way_to_start_the_product(pyproject):
+    """The productization's own stability rule: one entry point, not three.
+
+    Before it there were two Streamlit files under `app/` and no command that
+    started either from outside a checkout. A reader had to know which of the
+    two was current — which is the "duplicate entry points" debt, and it is the
+    kind that grows rather than sits still.
+
+    What is checked is the shape rather than a count: exactly one console
+    script starts the application, the superseded v2 workspace has not come
+    back, and the legacy v1 dashboard is still there because ADR-010 keeps it.
+    """
+    scripts = pyproject["project"]["scripts"]
+    assert scripts["fabops-app"] == "fabapp.cli:main"
+
+    streamlit_apps = sorted(p.name for p in (REPO / "app").glob("*.py"))
+    assert streamlit_apps == ["ops_dashboard.py"], streamlit_apps
+
+    from fabapp.cli import ui_path
+
+    assert ui_path().is_file()
+    assert ui_path().is_relative_to(SRC / "fabapp")
 
 
 def test_the_engine_and_the_demo_are_separately_named(pyproject):

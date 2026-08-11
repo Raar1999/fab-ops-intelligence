@@ -112,6 +112,8 @@ Enforcement of §4 is wired: `fabops` and `app` are scanned for `fabsim` imports
 Enforcement (designed now, wired in Phase 1 implementation):
 
 1. **Import lint:** no module under `src/fabops/` or `app/` may import `fabsim` or reference the strings `scenarios/`, `truth/`, `truth.json` (test L9 in `ANTI_LEAKAGE_DESIGN.md`).
+
+   > **Extended at the productization gate (ADR-037).** A fourth root joined the lint and it carries a *different* rule, so L9 is now a per-root table (`ANTI_LEAKAGE_DESIGN.md` §3.10, `fabeval.leakage.CODE_PLANE_ROOTS`). `src/fabapp/` is the product plane: it **may** import `fabsim` and name the configuration directory, because creating a dataset is what a user does with it, and it may reference **no** spelling of the hidden plane and may not import `fabeval`. The read discipline in §2 above is unchanged for every other consumer — and what keeps the product honest is not this lint but the two structural facts underneath it: the builder it calls returns a handle with a database path and no directory, and the analysis it calls takes that path and nothing else.
 2. **API shape:** the only supported entry point for analytical code is "open `<dataset_dir>/fab.db`"; fabops helpers take a DB path, never a dataset directory — so reaching truth requires deliberate circumvention, not accident.
 3. **CI check:** the benchmark runner is the sole code path constructing truth paths; a grep-based CI job fails on new references.
 

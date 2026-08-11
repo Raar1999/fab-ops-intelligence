@@ -67,29 +67,62 @@ def code_strings(path: Path) -> list[str]:
 # ------------------------------------------------------------- the three rows
 
 
-def test_fabops_reaches_neither_plane():
+def test_no_code_surface_reaches_a_plane_it_is_not_entitled_to():
     """A10 / L9, in the direction that matters most.
 
-    Every *code surface*, not every `.py`. The reader is imported from
-    `fabeval.leakage` rather than reimplemented here, so this test and the
-    shipped check cannot drift into two different definitions of what "the code
-    plane" is — which is exactly how the notebook came to be listed as covered
-    while never being read.
+    Every *code surface*, not every `.py`. Both the reader and the **table of
+    what each root may reach** are imported from `fabeval.leakage` rather than
+    reimplemented here, so this test and the shipped check cannot drift into
+    two definitions of the rule — which is exactly how the notebook came to be
+    listed as covered while never being read.
+
+    Four roots now, not three. `src/fabapp` is the product plane and its row is
+    a different rule: it may import the simulator, because generating a dataset
+    is what a product does, and it may name the configuration directory,
+    because choosing a scenario is the user's own act. It may not import the
+    grader and may not name the hidden plane at all (ADR-037).
     """
-    from fabeval.leakage import code_surfaces
+    from fabeval.leakage import CODE_PLANE_ROOTS, code_surfaces
+
+    assert {root for root, _imports, _tokens in CODE_PLANE_ROOTS} == {
+        "src/fabops", "app", "notebooks", "src/fabapp"}
 
     scanned: list[str] = []
-    for root in ("src/fabops", "app", "notebooks"):
+    for root, forbidden_imports, forbidden_tokens in CODE_PLANE_ROOTS:
         directory = REPOSITORY / root
         if not directory.exists():
             continue
         for label, source in code_surfaces(directory):
             scanned.append(label)
             for name in imports_of_source(source):
-                assert name.split(".")[0] not in ("fabsim", "fabeval"), label
-            for token in ("truth.json", "truth/", "scenarios/"):
-                assert token not in source, (label, token)
+                assert name.split(".")[0] not in forbidden_imports, label
+            for token in forbidden_tokens:
+                assert token not in source.lower(), (label, token)
     assert len(scanned) >= 6, scanned
+
+
+def test_the_product_plane_is_scanned_and_is_the_only_root_that_may_generate():
+    """The row that was added, asserted rather than assumed.
+
+    Two failure modes this closes. A product root that was listed and matched
+    no file would be a root that cannot fail — the notebook's defect, again. And
+    a permission granted to the product plane must not silently widen to the
+    analysis plane, so the rows are compared rather than each read alone.
+    """
+    from fabeval.leakage import CODE_PLANE_ROOTS, code_surfaces
+
+    rows = {root: (imports, tokens)
+            for root, imports, tokens in CODE_PLANE_ROOTS}
+
+    assert "fabsim" not in rows["src/fabapp"][0]
+    assert "fabeval" in rows["src/fabapp"][0]
+    assert rows["src/fabapp"][1] == ("truth",)
+    for root in ("src/fabops", "app", "notebooks"):
+        assert "fabsim" in rows[root][0], root
+
+    labels = [label for label, _ in
+              code_surfaces(REPOSITORY / "src" / "fabapp")]
+    assert len(labels) >= 8, labels
 
 
 def test_the_notebook_is_one_of_the_surfaces_that_gets_scanned():

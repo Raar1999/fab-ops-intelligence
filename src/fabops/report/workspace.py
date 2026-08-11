@@ -30,6 +30,8 @@ __all__ = [
     "WORKSPACE_PAGES",
     "control_chart",
     "dataset_summary",
+    "defect_page",
+    "defects_per_wafer",
     "equipment_page",
     "fab_today",
     "process_page",
@@ -39,7 +41,16 @@ __all__ = [
 ]
 
 #: The information architecture `DASHBOARD_AUDIT` §4 recommends, in its order.
-WORKSPACE_PAGES = ("Fab Today", "Process", "Equipment", "Yield",
+#:
+#: **Defect joined the list when the product plane did.** The audit's §4 folds
+#: the defect channel into Fab Today's movers and the wafer explorer's maps,
+#: which is where it lived while the surface was one investigator's tool. A
+#: product has a defect *domain* to show — the class Pareto, the per-wafer
+#: spatial signatures, the chambers whose wafers carry the most — and every one
+#: of those numbers was already being computed by `fabops.monitors.defect` and
+#: thrown away. The page is an assembly of measurements that already existed,
+#: which is the only kind of page this module is allowed to add.
+WORKSPACE_PAGES = ("Fab Today", "Process", "Equipment", "Yield", "Defect",
                    "Investigation", "Wafer explorer")
 
 
@@ -189,6 +200,22 @@ def process_page(connection: sqlite3.Connection,
 # ------------------------------------------------------------- Equipment
 
 
+def defects_per_wafer(connection: sqlite3.Connection) -> dict[str, float]:
+    """Defects per wafer seen, per chamber.
+
+    Extracted so the equipment page and the defect page read one query rather
+    than two that agree today. A wafer meets several chambers, so this counts
+    exposure and not attribution — the same number on both pages, and the same
+    caveat.
+    """
+    return {row[0]: row[1] for row in connection.execute("""
+        SELECT f.chamber_label,
+               COUNT(*) * 1.0 / COUNT(DISTINCT f.wafer_id)
+        FROM (SELECT DISTINCT chamber_label, wafer_id FROM fact_wafer_step) f
+        JOIN fact_defect d ON d.wafer_id = f.wafer_id
+        GROUP BY f.chamber_label ORDER BY f.chamber_label""")}
+
+
 def equipment_page(connection: sqlite3.Connection,
                    report: Mapping[str, Any]) -> dict[str, Any]:
     health = report.get("measurements", {}).get("equipment", {}).get(
@@ -198,12 +225,7 @@ def equipment_page(connection: sqlite3.Connection,
     maintenance = list(iter_dicts(connection, "fact_maintenance",
                                   order_by="maint_id"))
     alarms = list(iter_dicts(connection, "fact_alarm", order_by="alarm_id"))
-    defects = {row[0]: row[1] for row in connection.execute("""
-        SELECT f.chamber_label,
-               COUNT(*) * 1.0 / COUNT(DISTINCT f.wafer_id)
-        FROM (SELECT DISTINCT chamber_label, wafer_id FROM fact_wafer_step) f
-        JOIN fact_defect d ON d.wafer_id = f.wafer_id
-        GROUP BY f.chamber_label ORDER BY f.chamber_label""")}
+    defects = defects_per_wafer(connection)
     return {
         "health": health, "utilization": utilization,
         "maintenance": maintenance, "alarms": alarms,
@@ -253,6 +275,42 @@ def yield_page(connection: sqlite3.Connection,
         "lots": lots,
         "signals": [s for s in report.get("signals", ())
                     if s["family"] == "yield"],
+    }
+
+
+# ---------------------------------------------------------------- Defect
+
+
+def defect_page(connection: sqlite3.Connection,
+                report: Mapping[str, Any]) -> dict[str, Any]:
+    """The defect domain: what was found, where on the wafer, and off which
+    chamber.
+
+    Assembly only. The Pareto and the four signature leaderboards are
+    `fabops.monitors.defect`'s own measurements, the rule hits are its signals,
+    and the per-chamber rate is the query the equipment page already runs. The
+    one thing this function adds is the *order* they are read in, which is the
+    order the audit's §4 puts them in: what moved, then what it looks like,
+    then where it came from.
+    """
+    measurements = report.get("measurements", {}).get("defect", {})
+    return {
+        "signals": [s for s in report.get("signals", ())
+                    if s["family"] == "defect"],
+        "class_pareto": measurements.get("class_pareto", []),
+        "signature_leaders": measurements.get("signature_leaders", {}),
+        "wafers_scored": measurements.get("wafers_scored", 0),
+        "signature_note": measurements.get("signature_note", ""),
+        "per_chamber": [
+            {"chamber_label": chamber, "defects_per_wafer": round(rate, 3)}
+            for chamber, rate in sorted(defects_per_wafer(connection).items(),
+                                        key=lambda row: (-row[1], row[0]))],
+        "per_chamber_note": (
+            "a wafer meets many chambers, so this is exposure and not "
+            "attribution: a chamber high on this list shares its wafers with "
+            "every other chamber those wafers visited. Attribution is "
+            "`fabops.diagnosis`, which compares a candidate against a "
+            "permutation of the candidate label inside this dataset"),
     }
 
 
@@ -342,6 +400,7 @@ def load_workspace(db_path: Path | str) -> dict[str, Any]:
             "process": process_page(connection, monitor_report),
             "equipment": equipment_page(connection, monitor_report),
             "yield": yield_page(connection, monitor_report),
+            "defect": defect_page(connection, monitor_report),
             "investigation": decision,
             "wafers": wafer_index(connection),
         }
