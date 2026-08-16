@@ -1,4 +1,4 @@
-# Fab Ops Intelligence
+# FabOps — Semiconductor Fab Simulation, Observable SQL, Evaluation, Diagnosis and Operations Intelligence
 
 **A synthetic semiconductor fab whose faults are physics-mediated and whose answer key is a physically separate file — plus the monitors, the root-cause engine and the decision-support layer that read it, and the benchmark that says how often the engine is right.**
 
@@ -68,23 +68,34 @@ The claim this repository makes is therefore not *"it finds the fault"*. It is: 
 
 ## Getting started
 
-```bash
-git clone <this repository> && cd fab-ops-intelligence
-pip install -e ".[app,notebook,dev]"
+On Windows, clone the repository and **double-click `FabOps.bat`**. That is the
+whole of it — no terminal, no PowerShell, no commands to learn. The launcher
+installs this checkout and then starts the application in a window that stays
+attached to it.
 
+Everywhere else, and for anyone who would rather type it:
+
+```bash
+git clone https://github.com/Raar1999/fab-ops-intelligence.git
+cd fab-ops-intelligence
+
+python -m pip install -e ".[app]"      # the product
 fabops-app
 ```
 
-That is the whole of it. `fabops-app` opens a local browser application and
-lands on **Datasets**, because there is deliberately no default one — the
-legacy database below is a different fab, and a product that quietly fell back
-to it would answer the wrong question with no error anywhere.
+`FabOps.bat` runs exactly those two commands — against the checkout's own
+`.venv` when it has one — and does nothing else. To work on the repository
+rather than just run it, install the other two extras as well:
+`python -m pip install -e ".[app,notebook,dev]"` — `dev` is what `pytest` needs.
 
-On Windows you need type neither command: **double-click `FabOps.bat`** in the
-repository folder. It runs the two steps above — installs this checkout with
-the `app` extra and, if that succeeds, starts `fabops-app` — in a terminal
-window that stays attached to the application. It is a convenience launcher
-around the commands above and nothing else.
+The install must be **editable, from a source checkout**: the scenario library,
+the world template and the legacy database live in the working tree, so the
+repository is the product rather than a build input.
+
+`fabops-app` opens a local browser application and lands on **Datasets**,
+because there is deliberately no default one — the legacy database below is a
+different fab, and a product that quietly fell back to it would answer the wrong
+question with no error anywhere.
 
 ```
 Datasets ─── pick a scenario and a seed ──► generate (~20 s) ──┐
@@ -124,6 +135,29 @@ Useful flags: `--dataset` and `--page` open on a particular screen,
 `--list` prints the datasets that exist, `--where` prints the paths this
 installation uses, `--check` runs the whole workflow headlessly, and
 `--legacy` starts the legacy dashboard described below.
+
+## The workspace, screen by screen
+
+Nine screens in four sections. Only **Datasets** and **About** work without an
+open dataset, which is what lets a first-time user reach something useful before
+anything exists.
+
+| Screen | What it is for |
+|---|---|
+| **Datasets** | create a dataset from a scenario and a seed, or open one that exists. Shows scenario, seed, horizon, schema and generator version, build fingerprint and validation status, and refuses anything that is not a schema v2 dataset |
+| **Fab Today** | the standing summary: signals raised, least available chambers, defect movers. The entry point when a dataset is already open |
+| **Process** | SPC/EWMA/CUSUM control charts on process residuals, and signals per chamber *with their denominators* — a count without its denominator is not a rate |
+| **Equipment** | equipment health and availability, maintenance effects, and the signals raised against each tool |
+| **Yield** | attainment by product, lots worst-attainment-first, and each chamber's standing on cohort yield |
+| **Defect** | class Pareto, defects per wafer by chamber, per-wafer spatial signatures, and defect-rate rule hits |
+| **Wafer explorer** | one wafer at a time: its route, its steps, its measurements |
+| **Investigation** | run the engine. Ranked candidates or `insufficient_evidence`, with the evidence, onsets, cross-family agreement, confounders, rivals considered and what could not be assessed — then "assume it is this one, what would acting cost?", and export |
+| **About** | what the application is, what it may and may not see, and the versions in play |
+
+The six **Explore** screens present what the monitors produced. They compute
+nothing of their own, and where a candidate is highlighted it is highlighted
+because the engine ranked it — the presentation layer never reaches a conclusion
+the engine did not reach.
 
 ## For developers: the commands underneath
 
@@ -172,6 +206,7 @@ engine.
 
 ```
 fab-ops-intelligence/
+├── FabOps.bat                  the launcher: double-click → install → `fabops-app`
 ├── src/fabsim/                 the simulator — the only code that sees a scenario config
 │   ├── world.py timeline.py latent.py response.py observation.py
 │   ├── defects.py die.py       the causal chain: mechanism → … → yield
@@ -233,6 +268,13 @@ fab-ops-intelligence/
 
 ## Limitations — kept brutal
 
+Everything below is a **known limitation**: a measured result, a structural
+boundary of the method, or a declared scope ceiling. None of it is a bug — no
+open defect is known at the time of this release, and where a limit is
+quantified the number comes from the benchmark rather than from an estimate. A
+weak measured capability that is reported accurately is a finding; it is not a
+software failure.
+
 - **The engine is weak.** At its declared level it abstains on every dataset in
   the library. Its false-alarm rate is exactly zero and so is its detection rate.
   The numbers above are the whole claim.
@@ -253,6 +295,17 @@ fab-ops-intelligence/
   `fabops.monitors`.
 - **One fab, one route, ~500 wafers per dataset, no sensor traces, simulated
   physics.** The scale ceiling is declared rather than apologised for (ADR-012).
+  Each generated dataset writes roughly 120 MB and takes about 20 seconds, and
+  generated datasets are not committed — they are reproducible from (scenario,
+  world, seed, version) and are ignored by Git.
+- **It runs from a source checkout, installed editable.** The scenario library,
+  the world template and the legacy database live in the working tree, so
+  `pip install -e` is the supported form and there is no wheel on PyPI. One
+  consequence worth knowing on Windows: the console scripts are installed into
+  the `Scripts/` directory of whichever interpreter did the install, and if that
+  directory is not on `PATH`, `fabops-app` will not resolve even though the
+  install succeeded. `FabOps.bat` sidesteps this by using the checkout's own
+  environment when it has one.
 - **Nothing here has been deployed anywhere, and no number in this repository
   describes a real fab.**
 
@@ -270,14 +323,18 @@ SQLite file, so it is portable across platforms. A reference-build table pins
 the digest each generator version produces, so generation cannot move without a
 version number moving with it.
 
-Continuous integration is **not** currently exercised: the workflow in
-`.github/workflows/` encodes the locally verified sequence, and every check
-described here is run locally.
+Every number and every check described in this README was produced by running
+the suite **locally**, on Windows, against this checkout. The workflow in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) encodes that same
+sequence — editable install, tests, full v1 database regeneration, tests again —
+and is configured to run on push; its result is a fact about GitHub rather than
+a claim this README makes, and nothing here is reported as having passed CI.
 
 ## Where the reasoning lives
 
 | Document | What it settles |
 |---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the system as built: the four packages, what each may see, and how the boundaries are enforced |
 | [`docs/PROJECT_VISION.md`](docs/PROJECT_VISION.md) | the question the project answers, and what is out of scope |
 | [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) | every decision, with what was measured and what was rejected |
 | [`docs/design/`](docs/design/) | the binding contracts: schema, ground truth, anti-leakage, causal model, scenarios, diagnosis |
