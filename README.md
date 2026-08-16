@@ -80,6 +80,12 @@ lands on **Datasets**, because there is deliberately no default one — the
 legacy database below is a different fab, and a product that quietly fell back
 to it would answer the wrong question with no error anywhere.
 
+On Windows, `.\run_fabops.ps1` runs those two steps for you: it installs this
+checkout with the `app` extra and, if that succeeds, starts `fabops-app`. It is
+a convenience wrapper around the commands above and nothing else. If PowerShell
+refuses to run it, its execution policy is the reason —
+`powershell -ExecutionPolicy Bypass -File .\run_fabops.ps1`.
+
 ```
 Datasets ─── pick a scenario and a seed ──► generate (~20 s) ──┐
         └─── or open one that already exists ──────────────────┤
