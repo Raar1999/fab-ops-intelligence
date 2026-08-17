@@ -14,6 +14,10 @@ dist/
 .vscode/
 .idea/
 
+# Local assistant/agent state. Machine-local settings that are never part of
+# the project and must not become tracked.
+.claude/
+
 # Generated FabSim datasets. `fabsim.emit.DATASET_ROOT` defaults here, so a
 # build run without an explicit root would otherwise drop hundreds of megabytes
 # of observable planes - and their hidden `truth/` siblings - into the working
